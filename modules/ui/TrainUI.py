@@ -10,7 +10,7 @@ import webbrowser
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import scripts.generate_debug_report
 from modules.ui import GeneralTab
@@ -42,6 +42,7 @@ from modules.util.TrainProgress import TrainProgress
 from modules.util.ui import components
 from modules.util.ui.ui_utils import set_window_icon
 from modules.util.ui.UIState import UIState
+from modules.util.ui.validation import flush_and_validate_all
 
 import torch
 
@@ -459,7 +460,7 @@ class TrainUI(ctk.CTk, TkinterDnD.DnDWrapper):
                          tooltip="The base embedding to train on. Leave empty to create a new embedding")
         components.path_entry(
             frame, 0, 1, self.ui_state, "embedding.model_name",
-            path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+            mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
         )
 
         # token count
@@ -717,6 +718,18 @@ class TrainUI(ctk.CTk, TkinterDnD.DnDWrapper):
     def start_training(self):
         if self.training_thread is None:
             self.save_default()
+
+            # --- pre-training validation gate ---
+            errors = flush_and_validate_all()
+
+            if errors:
+                messagebox.showerror(
+                    "Cannot Start Training",
+                    "Please fix the following errors before training:\n\n"
+                    + "\n".join(f"• {e}" for e in errors),
+                )
+                return
+
             self._set_training_button_running()
 
             self.training_commands = TrainCommands()

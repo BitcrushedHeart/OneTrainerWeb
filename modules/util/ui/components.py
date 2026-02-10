@@ -6,14 +6,14 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Any, Literal
 
-from modules.util.enum.ModelFormat import ModelFormat
+from modules.util.enum.PathIOType import PathIOType
 from modules.util.enum.TimeUnit import TimeUnit
 from modules.util.enum.TrainingMethod import TrainingMethod
 from modules.util.path_util import supported_image_extensions
 from modules.util.ui.ToolTip import ToolTip
 from modules.util.ui.ui_utils import DebounceTimer, register_drop_target
 from modules.util.ui.UIState import UIState
-from modules.util.ui.validation import ValidationResult, validate_basic_type, validate_destination, validate_file_path
+from modules.util.ui.validation import DEFAULT_MAX_UNDO, FieldValidator, PathValidator
 
 import customtkinter as ctk
 from customtkinter.windows.widgets.scaling import CTkScalingBaseClass
@@ -391,14 +391,15 @@ def entry(
         column,
         ui_state: UIState,
         var_name: str,
-        command: Callable[[], None] = None,
+        command: Callable[[], None] | None = None,
         tooltip: str = "",
         wide_tooltip: bool = False,
         width: int = 140,
-        sticky: str = "ew",
-        custom_validator: Callable[[str], ValidationResult] | None = None,
-        validation_state: ValidationState = None,
-        enable_hover_validation: bool = False,
+        sticky: str = "new",
+        max_undo: int | None = None,
+        validator_factory: Callable[..., FieldValidator] | None = None,
+        extra_validate: Callable[[str], str | None] | None = None,
+        required: bool = False,
 ):
 
     var = ui_state.get_var(var_name)
@@ -409,61 +410,40 @@ def entry(
     component = ctk.CTkEntry(master, textvariable=var, width=width)
     component.grid(row=row, column=column, padx=PAD, pady=PAD, sticky=sticky)
 
-    validation_handler = EntryValidationHandler(
-        component=component,
-        var=var,
-        var_name=var_name,
-        ui_state=ui_state,
-        custom_validator=custom_validator,
-        validation_state=validation_state,
-    )
-    validation_trace_name = var.trace_add("write", validation_handler.debounced_validate)
-
-    component.bind("<FocusIn>", validation_handler.on_focus_in)
-    component.bind("<FocusOut>", validation_handler.on_focus_out)
-    for event in ("<Key>", "<<Paste>>", "<<Cut>>"):
-        component.bind(event, validation_handler.on_user_input)
-
-    if enable_hover_validation and validation_state:
-        try:
-            show_tooltips_var = ui_state.get_var("validation_show_tooltips")
-        except (KeyError, AttributeError):
-            show_tooltips_var = None
-
-        validation_tooltip = validation_handler.validation_tooltip
-
-        def on_hover_enter(_e=None):
-            if show_tooltips_var and not _safe_bool(show_tooltips_var):
-                return
-
-            if validation_state.status == 'error':
-                validation_tooltip.show_error(validation_state.message, duration_ms=None)
-            elif validation_state.status == 'warning':
-                validation_tooltip.show_warning(validation_state.message, duration_ms=None)
-
-        def on_hover_leave(_e=None):
-            validation_tooltip.hide()
-
-        component.bind("<Enter>", on_hover_enter, add="+")
-        component.bind("<Leave>", on_hover_leave, add="+")
+    if validator_factory is not None:
+        validator = validator_factory(
+            component, var, ui_state, var_name,
+            max_undo=max_undo or DEFAULT_MAX_UNDO,
+            extra_validate=extra_validate,
+            required=required,
+        )
+    else:
+        validator = FieldValidator(
+            component, var, ui_state, var_name,
+            max_undo=max_undo or DEFAULT_MAX_UNDO,
+            extra_validate=extra_validate,
+            required=required,
+        )
+    validator.attach()
+    component._validator = validator  # type: ignore[attr-defined]
 
     original_destroy = component.destroy
 
     def new_destroy():
         # 'temporary' fix until https://github.com/TomSchimansky/CustomTkinter/pull/2077 is merged
+        # unfortunately Tom has admitted to forgetting about how to maintain CTK so this likely will never be merged
         if component._textvariable_callback_name:
-            component._textvariable.trace_remove("write", component._textvariable_callback_name)
+            component._textvariable.trace_remove("write", component._textvariable_callback_name)  # type: ignore[union-attr]
             component._textvariable_callback_name = ""
 
-        validation_handler.cleanup()
-        var.trace_remove("write", validation_trace_name)
+        validator.detach()
 
         if command is not None and trace_id is not None:
             ui_state.remove_var_trace(var_name, trace_id)
 
         original_destroy()
 
-    component.destroy = new_destroy
+    component.destroy = new_destroy  # type: ignore[assignment]
 
     if tooltip:
         ToolTip(component, tooltip, wide=wide_tooltip)
@@ -472,143 +452,92 @@ def entry(
 
 
 def path_entry(
-        master,
-        row,
-        column,
-        ui_state: UIState,
-        var_name: str,
-        path_modifier: Callable[[str], str] = None,
-        is_output: bool = False,
-        path_type: str = "file",  # "file" or "directory"
-        command: Callable[[str], None] = None,
+        master, row, column, ui_state: UIState, var_name: str,
+        *,
+        mode: Literal["file", "dir"] = "file",
+        io_type: PathIOType = PathIOType.INPUT,
+        path_modifier: Callable[[str], str] | None = None,
         allow_model_files: bool = True,
         allow_image_files: bool = False,
-        valid_extensions: list[str] = None,
-        use_model_validator: bool = False,
-        format_var_name: str = "output_model_format",
-        method_var_name: str = "training_method",
-        prefix_var_name: str = "save_filename_prefix",
-        width: int = 140,
-        sticky: str = "new",
+        command: Callable[[str], None] | None = None,
+        required: bool = False,
 ):
     frame = ctk.CTkFrame(master, fg_color="transparent")
     frame.grid(row=row, column=column, padx=1, pady=1, sticky=sticky)
     frame.grid_columnconfigure(0, weight=1)
 
-    if not is_output:
-        meta = ui_state.get_field_metadata(var_name)
-        is_output = getattr(meta, 'is_output', False)
+    def _path_validator_factory(comp, var, state, name, **kw):
+        return PathValidator(comp, var, state, name, io_type=io_type, **kw)
 
-    var = ui_state.get_var(var_name)
-
-    if use_model_validator:
-        validator = ModelOutputValidator(
-            var=var, ui_state=ui_state,
-            format_var_name=format_var_name,
-            method_var_name=method_var_name,
-            prefix_var_name=prefix_var_name,
-        )
-        validation_state = validator.state
-        custom_validator = validator.validate
-    else:
-        validator = None
-        validation_state = None
-
-        def simple_path_validator(value: str) -> ValidationResult:
-            if value and path_type == "directory":
-                path = Path(value)
-                trimmed_name = path.name.strip()
-                if trimmed_name != path.name:
-                    sep = '\\' if '\\' in value else '/'
-                    parent_str = str(path.parent)
-                    trimmed_path = f"{parent_str}{sep}{trimmed_name}" if parent_str != '.' else trimmed_name
-                    var.set(trimmed_path)
-                    value = trimmed_path
-            return validate_file_path(value, is_output, valid_extensions, path_type)
-
-        custom_validator = simple_path_validator
-
-    entry_widget = entry(
+    entry_component = entry(
         frame, row=0, column=0, ui_state=ui_state, var_name=var_name,
-        custom_validator=custom_validator,
-        validation_state=validation_state,
-        enable_hover_validation=bool(validator),
-        command=command,
-        width=width,
-        sticky="ew",
+        validator_factory=_path_validator_factory,
+        required=required,
     )
 
-    if validator:
-        validator.set_widget(entry_widget)
-        validator.setup_traces()
+    trace_ids = []
+    if io_type in (PathIOType.OUTPUT, PathIOType.MODEL):
+        validator = getattr(entry_component, '_validator', None)
+        if validator is not None:
+            for dep_var_name in ("prevent_overwrites", "output_model_format"):
+                with contextlib.suppress(KeyError, AttributeError):
+                    dep_var = ui_state.get_var(dep_var_name)
+                    tid = dep_var.trace_add("write", lambda *_a: validator.revalidate())
+                    trace_ids.append((dep_var, tid))
 
-    original_destroy = entry_widget.destroy
+    use_save_dialog = io_type in (PathIOType.OUTPUT, PathIOType.MODEL)
 
-    def new_destroy():
-        if validator:
-            validator.cleanup_traces()
-        original_destroy()
-
-    entry_widget.destroy = new_destroy
-
-    register_drop_target(entry_widget, ui_state, var_name, command)
-
-    # Browse button
-    def open_dialog():
-        if path_type == "directory":
-            selected_path = filedialog.askdirectory()
+    def __open_dialog():
+        if mode == "dir":
+            chosen = filedialog.askdirectory()
         else:
-            filetypes = [("All Files", "*.*")]
+            filetypes = [
+                ("All Files", "*.*"),
+            ]
+
             if allow_model_files:
-                filetypes.extend(MODEL_FILETYPES[1:])
+                filetypes.extend([
+                    ("Diffusers", "model_index.json"),
+                    ("Checkpoint", "*.ckpt *.pt *.bin"),
+                    ("Safetensors", "*.safetensors"),
+                ])
             if allow_image_files:
-                filetypes.append(("Image", ' '.join(f"*.{x}" for x in supported_image_extensions())))
+                filetypes.extend([
+                    ("Image", ' '.join([f"*.{x}" for x in supported_image_extensions()])),
+                ])
 
-            selected_path = (filedialog.asksaveasfilename(filetypes=filetypes) if is_output
-                             else filedialog.askopenfilename(filetypes=filetypes))
+            if use_save_dialog:
+                chosen = filedialog.asksaveasfilename(filetypes=filetypes)
+            else:
+                chosen = filedialog.askopenfilename(filetypes=filetypes)
 
-        if selected_path:
+        if chosen:
             if path_modifier:
-                selected_path = path_modifier(selected_path)
-            var.set(selected_path)
+                chosen = path_modifier(chosen)
+
+            ui_state.get_var(var_name).set(chosen)
+
             if command:
-                command(selected_path)
+                command(chosen)
 
     button_component = ctk.CTkButton(frame, text="...", width=40, command=open_dialog)
     button_component.grid(row=0, column=1, padx=(0, PAD), pady=PAD, sticky="nsew")
 
+    if trace_ids:
+        original_frame_destroy = frame.destroy
+        def _frame_destroy():
+            for dep_var, tid in trace_ids:
+                with contextlib.suppress(tk.TclError, ValueError):
+                    dep_var.trace_remove("write", tid)
+            original_frame_destroy()
+        frame.destroy = _frame_destroy  # type: ignore[assignment]
+
     return frame
 
 
-def app_title(master, row, column):
-    frame = ctk.CTkFrame(master)
-    frame.grid(row=row, column=column, padx=5, pady=5, sticky="nsew")
-
-    image_component = ctk.CTkImage(
-        Image.open("resources/icons/icon.png").resize((40, 40), Image.Resampling.LANCZOS),
-        size=(40, 40)
-    )
-    ctk.CTkLabel(frame, image=image_component, text="").grid(row=0, column=0, padx=PAD, pady=PAD)
-
-    label_component = ctk.CTkLabel(frame, text="OneTrainer", font=ctk.CTkFont(size=20, weight="bold"))
-    label_component.grid(row=0, column=1, padx=(0, PAD), pady=PAD)
-
-
-def label(master, row, column, text, pad=PAD, tooltip=None, wide_tooltip=False, wraplength=0, font=None):
-    kwargs = {"text": text, "wraplength": wraplength}
-    if font is not None:
-        kwargs["font"] = font
-    component = ctk.CTkLabel(master, **kwargs)
-    component.grid(row=row, column=column, padx=pad, pady=pad, sticky="nw")
-    if tooltip:
-        ToolTip(component, tooltip, wide=wide_tooltip)
-    return component
-
-
-def time_entry(master, row, column, ui_state: UIState, var_name: str, unit_var_name, supports_time_units: bool = True,
-               width: int = 50, unit_width: int = 100, sticky: str = "new"):
+def time_entry(master, row, column, ui_state: UIState, var_name: str, unit_var_name, supports_time_units: bool = True):
     frame = ctk.CTkFrame(master, fg_color="transparent")
-    frame.grid(row=row, column=column, padx=0, pady=0, sticky=sticky)
+    frame.grid(row=row, column=column, padx=0, pady=0, sticky="new")
 
     frame.grid_columnconfigure(0, weight=0)
     frame.grid_columnconfigure(1, weight=1)
@@ -755,18 +684,28 @@ def button(master, row, column, text, command, tooltip=None, **kwargs):
     return component
 
 
-def options(master, row, column, values, ui_state: UIState, var_name: str, command: Callable[[str], None] = None,
-            width: int = 140, sticky: str = "new"):
-    component = ctk.CTkOptionMenu(master, values=values, variable=ui_state.get_var(var_name), command=command, width=width)
-    component.grid(row=row, column=column, padx=PAD, pady=(PAD, PAD), sticky=sticky)
+def options(master, row, column, values, ui_state: UIState, var_name: str, command: Callable[[str], None] | None = None):
+    component = ctk.CTkOptionMenu(master, values=values, variable=ui_state.get_var(var_name), command=command)
+    component.grid(row=row, column=column, padx=PAD, pady=(PAD, PAD), sticky="new")
 
-    _wrap_dropdown_destroy(component)
+    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
+    def create_destroy(component):
+        orig_destroy = component.destroy
+
+        def destroy(self):
+            orig_destroy()
+            CTkScalingBaseClass.destroy(self)
+
+        return destroy
+
+    destroy = create_destroy(component._dropdown_menu)
+    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
 
     return component
 
 
 def options_adv(master, row, column, values, ui_state: UIState, var_name: str,
-                command: Callable[[str], None] = None, adv_command: Callable[[], None] = None):
+                command: Callable[[str], None] | None = None, adv_command: Callable[[], None] | None = None):
     frame = ctk.CTkFrame(master, fg_color="transparent")
     frame.grid(row=row, column=column, padx=0, pady=0, sticky="new")
 
@@ -781,13 +720,24 @@ def options_adv(master, row, column, values, ui_state: UIState, var_name: str,
     if command:
         command(ui_state.get_var(var_name).get())  # call command once to set the initial value
 
-    _wrap_dropdown_destroy(component)
+    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
+    def create_destroy(component):
+        orig_destroy = component.destroy
+
+        def destroy(self):
+            orig_destroy()
+            CTkScalingBaseClass.destroy(self)
+
+        return destroy
+
+    destroy = create_destroy(component._dropdown_menu)
+    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
 
     return frame, {'component': component, 'button_component': button_component}
 
 
 def options_kv(master, row, column, values: list[tuple[str, Any]], ui_state: UIState, var_name: str,
-               command: Callable[[Any], None] = None, width: int = 140, sticky: str = "new"):
+               command: Callable[[Any], None] | None = None):
     var = ui_state.get_var(var_name)
 
     if var.get() not in [str(value) for key, value in values] and values:
@@ -822,7 +772,18 @@ def options_kv(master, row, column, values: list[tuple[str, Any]], ui_state: UIS
     var.trace_add("write", lambda _0, _1, _2: update_var())
     update_var()  # call update_var once to set the initial value
 
-    _wrap_dropdown_destroy(component)
+    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
+    def create_destroy(component):
+        orig_destroy = component.destroy
+
+        def destroy(self):
+            orig_destroy()
+            CTkScalingBaseClass.destroy(self)
+
+        return destroy
+
+    destroy = create_destroy(component._dropdown_menu)
+    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
 
     return component
 
@@ -833,7 +794,7 @@ def switch(
         column,
         ui_state: UIState,
         var_name: str,
-        command: Callable[[], None] = None,
+        command: Callable[[], None] | None = None,
         text: str = "",
 ):
     var = ui_state.get_var(var_name)
@@ -850,7 +811,12 @@ def switch(
             ui_state.remove_var_trace(var_name, trace_id)
         original_destroy()
 
-    component.destroy = new_destroy
+            orig_destroy()
+
+        return destroy
+
+    destroy = create_destroy(component)
+    component.destroy = lambda: destroy(component)  # type: ignore[assignment]
 
     return component
 
