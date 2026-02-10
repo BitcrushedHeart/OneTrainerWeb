@@ -109,7 +109,7 @@ class SampleFrame(ctk.CTkFrame):
             components.label(bottom_frame, 6, 0, "base image path:",
                              tooltip="The base image used when inpainting.")
             components.path_entry(bottom_frame, 6, 1, self.ui_state, "base_image_path",
-                                  mode="file", allow_model_files=False,
+                                  path_type="file", allow_model_files=False,
                                   allow_image_files=True,
                                   )
 
@@ -117,6 +117,6 @@ class SampleFrame(ctk.CTkFrame):
             components.label(bottom_frame, 6, 2, "mask image path:",
                              tooltip="The mask used when inpainting.")
             components.path_entry(bottom_frame, 6, 3, self.ui_state, "mask_image_path",
-                                  mode="file", allow_model_files=False,
+                                  path_type="file", allow_model_files=False,
                                   allow_image_files=True,
                                   )

@@ -67,7 +67,7 @@ class LoraTab:
                          tooltip=f"The base {name} to train on. Leave empty to create a new {name}")
         entry = components.path_entry(
             master, 0, 1, self.ui_state, "lora_model_name",
-            mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+            path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
         )
         entry.grid(row=0, column=1, columnspan=4)
 

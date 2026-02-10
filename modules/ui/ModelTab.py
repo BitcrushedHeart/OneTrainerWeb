@@ -5,7 +5,6 @@ from modules.util.config.TrainConfig import TrainConfig
 from modules.util.enum.ConfigPart import ConfigPart
 from modules.util.enum.DataType import DataType
 from modules.util.enum.ModelFormat import ModelFormat
-from modules.util.enum.PathIOType import PathIOType
 from modules.util.enum.TrainingMethod import TrainingMethod
 from modules.util.ui import components
 from modules.util.ui.UIState import UIState
@@ -368,7 +367,7 @@ class ModelTab:
                          tooltip="Filename, directory or Hugging Face repository of the base model")
         components.path_entry(
             frame, row, 1, self.ui_state, "base_model_name",
-            mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+            path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
         )
 
         # compile
@@ -413,7 +412,7 @@ class ModelTab:
                                  tooltip="Filename, directory or Hugging Face repository of the prior model")
                 components.path_entry(
                     frame, row, 1, self.ui_state, "prior.model_name",
-                    mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+                    path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
                 )
 
             # prior weight dtype
@@ -431,7 +430,7 @@ class ModelTab:
                                  tooltip="Can be used to override the transformer in the base model. Safetensors and GGUF files are supported, local and on Huggingface. If a GGUF file is used, the DataType must also be set to GGUF")
                 components.path_entry(
                     frame, row, 1, self.ui_state, "transformer.model_name",
-                    mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+                    path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
                 )
 
             # transformer weight dtype
@@ -515,7 +514,7 @@ class ModelTab:
                                  tooltip="Filename, directory or Hugging Face repository of the text encoder 4 model")
                 components.path_entry(
                     frame, row, 1, self.ui_state, "text_encoder_4.model_name",
-                    mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+                    path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
                 )
 
             # text encoder 4 weight dtype
@@ -532,7 +531,7 @@ class ModelTab:
                              tooltip="Directory or Hugging Face repository of a VAE model in diffusers format. Can be used to override the VAE included in the base model. Using a safetensor VAE file will cause an error that the model cannot be loaded.")
             components.path_entry(
                 frame, row, 1, self.ui_state, "vae.model_name",
-                mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+                path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
             )
 
             # vae weight dtype
@@ -551,7 +550,7 @@ class ModelTab:
                          tooltip="Filename, directory or Hugging Face repository of the effnet encoder model")
         components.path_entry(
             frame, row, 1, self.ui_state, "effnet_encoder.model_name",
-            mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+            path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
         )
 
         # effnet encoder weight dtype
@@ -575,7 +574,7 @@ class ModelTab:
                          tooltip="Filename, directory or Hugging Face repository of the decoder model")
         components.path_entry(
             frame, row, 1, self.ui_state, "decoder.model_name",
-            mode="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
+            path_type="file", path_modifier=lambda x: Path(x).parent.absolute() if x.endswith(".json") else x
         )
 
         # decoder weight dtype
@@ -619,8 +618,7 @@ class ModelTab:
                          tooltip="Filename or directory where the output model is saved")
         components.path_entry(
             frame, row, 1, self.ui_state, "output_model_destination",
-            mode="file",
-            io_type=PathIOType.MODEL,
+            path_type="file",
         )
 
         # output data type
