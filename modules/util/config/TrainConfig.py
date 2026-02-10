@@ -23,6 +23,7 @@ from modules.util.enum.LossWeight import LossWeight
 from modules.util.enum.ModelFormat import ModelFormat
 from modules.util.enum.ModelType import ModelType, PeftType
 from modules.util.enum.Optimizer import Optimizer
+from modules.util.enum.TensorboardMode import TensorboardMode
 from modules.util.enum.TimestepDistribution import TimestepDistribution
 from modules.util.enum.TimeUnit import TimeUnit
 from modules.util.enum.TrainingMethod import TrainingMethod
@@ -360,7 +361,7 @@ class TrainConfig(BaseConfig):
     debug_dir: str
     workspace_dir: str
     cache_dir: str
-    tensorboard: bool
+    tensorboard_mode: TensorboardMode
     tensorboard_expose: bool
     tensorboard_always_on: bool
     tensorboard_port: str
@@ -369,6 +370,13 @@ class TrainConfig(BaseConfig):
     validate_after_unit: TimeUnit
     continue_last_backup: bool
     include_train_config: ConfigPart
+
+    # validation settings
+    validation_auto_correct: bool
+    validation_show_tooltips: bool
+    use_friendly_names: bool
+    prevent_overwrite: bool
+    auto_prefix: bool
 
     # multi-GPU
     multi_gpu: bool
@@ -761,6 +769,7 @@ class TrainConfig(BaseConfig):
     def __migration_7(self, data: dict) -> dict:
         migrated_data = data.copy()
 
+        # Migrate lora_layers to layer_filter
         if "lora_layers" in migrated_data:
             migrated_data["layer_filter"] = migrated_data.pop("lora_layers")
         if "lora_layer_preset" in migrated_data:
@@ -797,6 +806,17 @@ class TrainConfig(BaseConfig):
         replace_dtype("decoder_text_encoder")
         replace_dtype("decoder_vqgan")
         migrated_data.pop("weight_dtype")
+
+        # Migrate old tensorboard booleans to enum
+        tensorboard = migrated_data.pop("tensorboard", True)
+        tensorboard_always_on = migrated_data.pop("tensorboard_always_on", False)
+
+        if tensorboard_always_on:
+            migrated_data["tensorboard_mode"] = TensorboardMode.ALWAYS_ON
+        elif tensorboard:
+            migrated_data["tensorboard_mode"] = TensorboardMode.TRAIN_ONLY
+        else:
+            migrated_data["tensorboard_mode"] = TensorboardMode.OFF
 
         return migrated_data
 
@@ -945,7 +965,7 @@ class TrainConfig(BaseConfig):
         data.append(("debug_dir", "debug", str, False))
         data.append(("workspace_dir", "workspace/run", str, False))
         data.append(("cache_dir", "workspace-cache/run", str, False))
-        data.append(("tensorboard", True, bool, False))
+        data.append(("tensorboard_mode", TensorboardMode.ALWAYS_ON, TensorboardMode, False))
         data.append(("tensorboard_expose", False, bool, False))
         data.append(("tensorboard_always_on", False, bool, False))
         data.append(("tensorboard_port", 6006, int, False))
@@ -954,6 +974,13 @@ class TrainConfig(BaseConfig):
         data.append(("validate_after_unit", TimeUnit.EPOCH, TimeUnit, False))
         data.append(("continue_last_backup", False, bool, False))
         data.append(("include_train_config", ConfigPart.NONE, ConfigPart, False))
+
+        # validation settings
+        data.append(("validation_auto_correct", True, bool, False))
+        data.append(("validation_show_tooltips", True, bool, False))
+        data.append(("use_friendly_names", False, bool, False))
+        data.append(("prevent_overwrite", True, bool, False))
+        data.append(("auto_prefix", False, bool, False))
 
         #multi-GPU
         data.append(("multi_gpu", False, bool, False))
