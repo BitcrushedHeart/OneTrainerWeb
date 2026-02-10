@@ -1,489 +1,425 @@
+"""Input validation utilities for UI components."""
+
 from __future__ import annotations
 
-import contextlib
 import os
 import re
-import sys
-import tkinter as tk
-from collections import deque
-from collections.abc import Callable
-from pathlib import PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal
 
-from modules.util.enum.PathIOType import PathIOType
+from modules.util.enum.ModelFormat import ModelFormat
+from modules.util.enum.TrainingMethod import TrainingMethod
 
-if TYPE_CHECKING:
-    from modules.util.ui.UIState import UIState
-
-    import customtkinter as ctk
+from friendlywords import generate as generate_friendly
 
 
-DEBOUNCE_TYPING_MS = 250
-UNDO_DEBOUNCE_MS = 500
-ERROR_BORDER_COLOR = "#dc3545"
+@dataclass(frozen=True)
+class ValidationSettings:
+    datetime_format: str = "%Y%m%d_%H%M%S"
 
-_active_validators: set[FieldValidator] = set()
+SETTINGS = ValidationSettings()
 
+ONLY_WHITESPACE = re.compile(r"^\s+$")
 TRAILING_SLASH_RE = re.compile(r"[\\/]$")
 ENDS_WITH_EXT = re.compile(r"\.[A-Za-z0-9]+$")
-HUGGINGFACE_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+INVALID_NAMES = {"", "."}
+GENERIC_MODEL_NAMES = {"lora", "embedding", "embeddings", "model", "finetune"}
 
-_INVALID_CHARS = {chr(c) for c in range(32)}
-_IS_WINDOWS = sys.platform == "win32"
-if _IS_WINDOWS:
-    _INVALID_CHARS |= set('<>"|?*')
+INVALID_CHARS_WIN = set('<>:"|?*')
+INVALID_NAMES = {"", "."}
 
-_FORMAT_EXTENSIONS: dict[str, str] = {
-    "CKPT": ".ckpt",
-    "SAFETENSORS": ".safetensors",
-    "LEGACY_SAFETENSORS": ".safetensors",
-    "COMFY_LORA": ".safetensors",
-}
+ValidationStatus = Literal['success', 'warning', 'error']
+
+@dataclass
+class ValidationResult:
+    ok: bool
+    corrected: str | None
+    message: str = ""
+    status: ValidationStatus | None = None
+
+    def __post_init__(self):
+        """Auto-determine status from ok field if not explicitly set."""
+        if self.status is None:
+            self.status = 'success' if self.ok else 'error'
+
+    @property
+    def warning(self) -> bool:
+        """Backward compatibility: whether this is a warning."""
+        return self.status == 'warning'
+
+def _result(ok: bool, corrected: str | None = None, message: str = "", status: ValidationStatus | None = None) -> ValidationResult:
+    return ValidationResult(ok=ok, corrected=corrected, message=message, status=status)
 
 
-def _is_huggingface_repo_or_file(value: str) -> bool:
-    trimmed = value.strip()
+def _is_windows() -> bool:
+    return os.name == "nt"
 
-    if trimmed.startswith("https://"):
-        parsed = urlparse(trimmed)
-        if parsed.netloc not in {"huggingface.co", "huggingface.com"}:
-            return False
-        parts = parsed.path.strip("/").split("/")
-        if len(parts) >= 5 and parts[2] in {"resolve", "blob"}:
-            return bool(ENDS_WITH_EXT.search(parts[-1]))
+def _has_invalid_chars(path: str) -> bool:
+    if _is_windows():
+        has_drive = len(path) >= 2 and path[1] == ':' and path[0].isalpha()
+        start_idx = 2 if has_drive else 0
+        return any(c in INVALID_CHARS_WIN for c in path[start_idx:])
+    return "\x00" in path
+
+def _safe_exists(path: Path, check_dir: bool = True) -> bool:
+    try:
+        return path.is_dir() if check_dir else path.parent.exists()
+    except OSError:
         return False
 
-    if len(trimmed) > 96:
-        return False
-    if " " in trimmed or "\t" in trimmed:
-        return False
-    if "—" in trimmed or ".." in trimmed:
-        return False
-    if trimmed.startswith(("\\\\", "//", "/")):
-        return False
-    if len(trimmed) >= 2 and trimmed[1] == ":" and trimmed[0].isalpha():
-        return False
-    if trimmed.count("/") != 1:
-        return False
+def _folder_exists(path: Path) -> bool:
+    return _safe_exists(path, check_dir=True)
 
-    return bool(HUGGINGFACE_REPO_RE.match(trimmed))
+def _parent_exists(path: Path) -> bool:
+    return _safe_exists(path, check_dir=False)
 
+def _format_path(path: Path, separator: str) -> str:
+    return str(path).replace('\\', separator)
 
-def _has_invalid_chars(value: str) -> bool:
-    return bool(_INVALID_CHARS.intersection(value))
-
-
-def _check_overwrite(path: str, *, is_dir: bool, prevent: bool) -> str | None:
-    if not prevent:
-        return None
-    abs_path = os.path.abspath(path)
-    if is_dir and os.path.isdir(abs_path):
-        return "Output folder already exists (overwrite prevented)"
-    if not is_dir and os.path.isfile(abs_path):
-        return "Output file already exists (overwrite prevented)"
+def _check_parent_exists(path: Path) -> ValidationResult | None:
+    if path.parent != Path('.') and not _parent_exists(path):
+        return _result(False, None, "Parent folder does not exist.")
     return None
 
+def _has_extension(path: str | Path, extension: str) -> bool:
+    return str(path).lower().endswith(extension.lower())
 
-def validate_path(
+def _is_partial_match(current: str, required: str) -> bool:
+    return len(current) > 3 and required.startswith(current)
+
+def _has_prefix(stem: str, prefix: str) -> bool:
+    """Check if stem already contains the prefix (case-insensitive)."""
+    if not prefix:
+        return False
+    stem_lower, prefix_lower = stem.lower(), prefix.lower()
+    # Exact match or prefix followed by separator
+    return (stem_lower == prefix_lower or
+            stem_lower.startswith((f"{prefix_lower}-", f"{prefix_lower}_")))
+
+def generate_default_filename(
+    training_method: TrainingMethod,
+    prefix: str = "",
+    extension: str = ".safetensors",
+    use_friendly_names: bool = False,
+) -> str:
+    if use_friendly_names:
+        friendly = generate_friendly(1 if prefix else 2, separator="" if prefix else "-")
+        name = f"{prefix}_{friendly}" if prefix else friendly
+    else:
+        method_str = str(training_method).lower().replace('_', '-')
+        timestamp = datetime.now().strftime(SETTINGS.datetime_format)
+        name = f"{prefix}_{timestamp}" if prefix else f"{method_str}_{timestamp}"
+    return f"{name}{extension}"
+
+def make_unique_filename(base_path: Path, use_friendly_names: bool = False) -> Path:
+    """Generate a unique filename by appending a word or number if the path exists."""
+    if not base_path.exists():
+        return base_path
+
+    stem = base_path.stem
+    suffix = base_path.suffix
+    parent = base_path.parent
+
+    if use_friendly_names:
+        # Try 5 words before falling back to numbers
+        for _ in range(5):
+            word = generate_friendly(1, separator="")
+            new_path = parent / f"{stem}_{word}{suffix}"
+            if not new_path.exists():
+                return new_path
+
+    # Number-based approach (including friendly word fallback)
+    counter = 1
+    while counter <= 9999:
+        new_path = parent / f"{stem}_{counter}{suffix}"
+        if not new_path.exists():
+            return new_path
+        counter += 1
+
+    return base_path
+
+def get_allowed_formats_for_method(training_method: TrainingMethod) -> set[ModelFormat]:
+    if training_method in (TrainingMethod.EMBEDDING, TrainingMethod.LORA):
+        return {ModelFormat.SAFETENSORS, ModelFormat.CKPT}
+    return {ModelFormat.SAFETENSORS, ModelFormat.CKPT, ModelFormat.DIFFUSERS}
+
+@dataclass
+class ValidationContext:
+    raw: str
+    user_input: str
+    output_format: ModelFormat
+    training_method: TrainingMethod
+    autocorrect: bool
+    prefix: str
+    use_friendly_names: bool
+    is_output: bool
+    separator: str
+    prevent_overwrite: bool
+    auto_prefix: bool
+
+
+def _validate_basic_input(ctx: ValidationContext) -> ValidationResult | None:
+    """Perform basic input checks; return a ValidationResult to stop or None to continue."""
+    if ONLY_WHITESPACE.match(ctx.raw):
+        return _result(False, "", "Input cleared: empty or invalid.")
+
+    if not ctx.user_input or ctx.user_input in INVALID_NAMES:
+        return _result(False, "", "Input cleared: empty or invalid.")
+
+    if _has_invalid_chars(ctx.user_input):
+        return _result(False, None, "Input contains invalid path characters.")
+
+    if ctx.output_format not in get_allowed_formats_for_method(ctx.training_method):
+        return _result(False, None, f"{ctx.training_method} cannot output {ctx.output_format} format.")
+
+    if not ctx.is_output:
+        if not Path(ctx.user_input).exists():
+            return _result(False, None, "Input path does not exist.")
+        return _result(True, None, "")
+
+    return None
+
+def _validate_diffusers_path(ctx: ValidationContext) -> ValidationResult:
+    """Validate DIFFUSERS (directory-based) paths."""
+    ext_match = ENDS_WITH_EXT.search(ctx.user_input)
+
+    if ext_match and not ctx.autocorrect:
+        return _result(False, None, "DIFFUSERS expects a directory, not a file. Add a trailing slash.")
+
+    sanitized = ctx.user_input[:ext_match.start()] if ext_match else ctx.user_input
+    check_path = Path(sanitized)
+
+    if err := _check_parent_exists(check_path):
+        return err
+
+    if not ctx.autocorrect and _folder_exists(check_path):
+        msg = "Directory already exists. Stripped extension for DIFFUSERS." if ext_match else "Directory already exists."
+        return _result(True, sanitized if ext_match else None, msg, 'warning')
+
+    if ext_match:
+        return _result(True, sanitized, f"Stripped extension for {ctx.output_format}.")
+
+    return _result(True, None, "")
+
+def _validate_single_file_path(ctx: ValidationContext) -> ValidationResult:
+    """Validate single-file formats (SAFETENSORS, CKPT)."""
+    required_ext = ctx.output_format.file_extension()
+
+    is_dir_like = bool(TRAILING_SLASH_RE.search(ctx.user_input))
+    path = Path(ctx.user_input)
+
+    if not is_dir_like and '/' not in ctx.user_input and '\\' not in ctx.user_input and _folder_exists(path):
+        is_dir_like = True
+
+    if is_dir_like:
+        if ctx.autocorrect:
+            if not _folder_exists(path):
+                return _result(False, None, "Directory does not exist.")
+            default_name = generate_default_filename(ctx.training_method, ctx.prefix, required_ext, ctx.use_friendly_names)
+            corrected = ctx.user_input + default_name
+            return _result(True, corrected, f"Appended default filename: {default_name}")
+        return _result(False, None, "Path points to a folder; a filename is required.")
+
+    if err := _check_parent_exists(path):
+        return err
+
+    base = path.name
+
+    if base.endswith('.'):
+        if ctx.autocorrect:
+            new_base = base.rstrip('.')
+            new_path = _format_path(path.with_name(new_base), ctx.separator)
+            return _result(True, new_path, "Removed trailing period(s).")
+        return _result(False, None, "Filename cannot end with a period.")
+
+    # Handle generic model names and auto-prefix
+    stem_lower = path.stem.lower()
+
+    # Check for generic names that should be prefixed
+    if stem_lower in GENERIC_MODEL_NAMES and ctx.prefix and ctx.autocorrect:
+        new_stem = f"{ctx.prefix}_{path.stem}"
+        new_path = _format_path(path.with_name(new_stem + path.suffix), ctx.separator)
+        return _result(True, new_path, f"Added prefix to generic name '{path.stem}'.", 'warning')
+    elif stem_lower in GENERIC_MODEL_NAMES and ctx.prefix:
+        return _result(True, None, f"WARNING: Generic filename '{path.stem}' may cause confusion. Consider adding a prefix.", 'warning')
+
+    # Auto-prefix: add prefix to manually-entered filenames
+    if ctx.auto_prefix and ctx.prefix and ctx.autocorrect and not _has_prefix(path.stem, ctx.prefix):
+        new_stem = f"{ctx.prefix}-{path.stem}"
+        new_path = _format_path(path.with_name(new_stem + path.suffix), ctx.separator)
+        return _result(True, new_path, f"Added prefix '{ctx.prefix}' to filename.", 'warning')
+
+    if _has_extension(base, required_ext):
+        # Check if file exists and handle overwrite prevention
+        if path.exists():
+            if ctx.prevent_overwrite and ctx.autocorrect:
+                # Generate a unique filename
+                unique_path = make_unique_filename(path, ctx.use_friendly_names)
+                if unique_path != path:
+                    corrected = _format_path(unique_path, ctx.separator)
+                    suffix_added = unique_path.stem[len(path.stem):]  # Get what was added
+                    return _result(True, corrected, f"File exists. Added '{suffix_added}' to prevent overwrite.")
+            return _result(True, None, "WARNING: File already exists and will be overwritten.", 'warning')
+        return _result(True, None, "")
+
+    ext_match = ENDS_WITH_EXT.search(base)
+    if ext_match:
+        current_ext = ext_match.group(0).lower()
+        chars_after_dot = len(current_ext) - 1
+        start_idx = ext_match.start()
+
+        if chars_after_dot >= 3:
+            if _is_partial_match(current_ext, required_ext):
+                if ctx.autocorrect:
+                    new_base = base[:start_idx] + required_ext
+                    new_path = _format_path(path.with_name(new_base), ctx.separator)
+                    return _result(True, new_path, f"Completed {current_ext} -> {required_ext}")
+                return _result(False, None, f"Extension is incomplete; expected {required_ext}")
+            else:
+                if ctx.autocorrect:
+                    new_base = base[:start_idx] + required_ext
+                    new_path = _format_path(path.with_name(new_base), ctx.separator)
+                    return _result(True, new_path, f"Replaced {current_ext} with {required_ext}")
+                return _result(False, None, f"Wrong extension; expected {required_ext}")
+
+        if 1 <= chars_after_dot < 3 and required_ext.startswith(current_ext):
+            return _result(False, None, f"Extension {current_ext} is too short; Type at least 3 characters for auto-correction to occur.")
+
+        if ctx.autocorrect:
+            corrected = _format_path(Path(path.parent, base + required_ext), ctx.separator)
+            return _result(True, corrected, f"Appended {required_ext} extension.")
+        return _result(False, None, f"Filename must end with {required_ext}")
+
+    # No extension - append required extension
+    if ctx.autocorrect:
+        corrected = _format_path(Path(path.parent, base + required_ext), ctx.separator)
+        return _result(True, corrected, f"Appended {required_ext} extension.")
+    return _result(False, None, f"Filename must end with {required_ext}")
+
+def validate_destination(
+    raw: str,
+    output_format: ModelFormat,
+    training_method: TrainingMethod,
+    autocorrect: bool = True,
+    prefix: str = "",
+    use_friendly_names: bool = False,
+    is_output: bool = True,
+    prevent_overwrite: bool = False,
+    auto_prefix: bool = False,
+    skip_overwrite_protection: bool = False,
+) -> ValidationResult:
+    """
+    Validate and optionally auto-correct a model output destination path.
+
+    This function handles:
+    - Empty/invalid input
+    - Format/method compatibility
+    - Directory vs file paths
+    - File extension validation and correction
+    - Parent directory existence
+    - Existing file warnings
+    - Automatic overwrite prevention
+
+    Args:
+        raw: Raw user input string
+        output_format: Target output format (DIFFUSERS, SAFETENSORS, CKPT)
+        training_method: Training method being used
+        autocorrect: Whether to auto-correct invalid input
+        prefix: Optional prefix for auto-generated filenames
+        use_friendly_names: Use friendly names instead of timestamps
+        is_output: Whether this is an output path (True) or input path (False)
+        prevent_overwrite: Automatically make filename unique if it would overwrite
+        auto_prefix: Automatically add prefix to manually-entered filenames
+        skip_overwrite_protection: Skip overwrite protection (used when validation triggered by settings changes)
+
+    Returns:
+        ValidationResult with ok status, optional corrected value, and message
+    """
+    ctx = ValidationContext(
+        raw=raw,
+        user_input=raw.strip(),
+        output_format=output_format,
+        training_method=training_method,
+        autocorrect=autocorrect,
+        prefix=prefix,
+        use_friendly_names=use_friendly_names,
+        is_output=is_output,
+        separator='/' if '/' in raw else '\\',
+        prevent_overwrite=prevent_overwrite and not skip_overwrite_protection,
+        auto_prefix=auto_prefix,
+    )
+
+    if basic_check := _validate_basic_input(ctx):
+        return basic_check
+
+    if output_format == ModelFormat.DIFFUSERS:
+        return _validate_diffusers_path(ctx)
+    else:
+        return _validate_single_file_path(ctx)
+
+def validate_basic_type(
     value: str,
-    io_type: PathIOType = PathIOType.INPUT,
-    *,
-    prevent_overwrites: bool = False,
-    output_format: str | None = None,
-) -> str | None:
-    """Return an error string if *value* is an invalid path, else ``None``."""
-    trimmed = value.strip()
+    declared_type: type,
+    nullable: bool,
+    default_val: Any,
+) -> ValidationResult:
+    """Validate basic Python types (int, float, bool, str)."""
+    # Handle empty values
+    if value == "":
+        if nullable or (declared_type is str and default_val == ""):
+            return _result(True, None, "")
+        return _result(False, None, "Value required")
 
-    if not trimmed:
-        return "Path is empty"
-    if TRAILING_SLASH_RE.search(trimmed):
-        return "Path must not end with a slash"
-    if _has_invalid_chars(trimmed):
-        return "Path contains invalid characters"
+    # Type validation
+    try:
+        if declared_type is int:
+            int(value)
+        elif declared_type is float:
+            float(value)
+        elif declared_type is bool:
+            if value.lower() not in ("true", "false", "0", "1"):
+                return _result(False, None, "Invalid bool")
+        return _result(True, None, "")
+    except ValueError:
+        type_name = declared_type.__name__ if hasattr(declared_type, '__name__') else str(declared_type)
+        return _result(False, None, f"Invalid {type_name}")
 
-    if io_type == PathIOType.INPUT and _is_huggingface_repo_or_file(trimmed):
-        return None
+def validate_file_path(
+    value: str,
+    is_output: bool = False,
+    valid_extensions: list[str] | None = None,
+    path_type: str = "file",
+) -> ValidationResult:
+    """Validate a file or directory path."""
+    if not value:
+        return _result(True, None, "")
 
-    if io_type in (PathIOType.OUTPUT, PathIOType.MODEL):
-        if not os.path.isdir(os.path.dirname(os.path.abspath(trimmed))):
-            return "Parent folder does not exist"
+    # Check for invalid characters
+    if _has_invalid_chars(value):
+        return _result(False, None, "Input contains invalid path characters.")
 
-    if io_type == PathIOType.MODEL and output_format is not None:
-        if output_format == "DIFFUSERS":
-            if ENDS_WITH_EXT.search(trimmed):
-                return "Diffusers output must be a directory path, not a file"
-            return _check_overwrite(trimmed, is_dir=True, prevent=prevent_overwrites)
+    path = Path(value)
 
-        expected_ext = _FORMAT_EXTENSIONS.get(output_format, "")
-        if expected_ext:
-            suffix = (PureWindowsPath(trimmed) if _IS_WINDOWS else PurePosixPath(trimmed)).suffix.lower()
-            if suffix != expected_ext:
-                return f"Extension must be '{expected_ext}' for {output_format} format"
-        return _check_overwrite(trimmed, is_dir=False, prevent=prevent_overwrites)
-
-    if io_type == PathIOType.OUTPUT:
-        return _check_overwrite(trimmed, is_dir=False, prevent=prevent_overwrites)
-
-    return None
-
-DEFAULT_MAX_UNDO = 20
-
-
-class UndoHistory:
-    def __init__(self, max_size: int = DEFAULT_MAX_UNDO):
-        self._stack: deque[str] = deque(maxlen=max_size)
-        self._redo_stack: list[str] = []
-
-    def push(self, value: str):
-        if self._stack and self._stack[-1] == value:
-            return
-        self._stack.append(value)
-        self._redo_stack.clear()
-
-    def undo(self, current: str) -> str | None:
-        if not self._stack:
-            return None
-        top = self._stack[-1]
-        if top == current and len(self._stack) > 1:
-            self._redo_stack.append(self._stack.pop())
-            return self._stack[-1]
-        elif top != current:
-            self._redo_stack.append(current)
-            return top
-        return None
-
-    def redo(self) -> str | None:
-        if not self._redo_stack:
-            return None
-        value = self._redo_stack.pop()
-        self._stack.append(value)
-        return value
-
-
-class DebounceTimer:
-    def __init__(self, widget, delay_ms: int, callback: Callable[..., Any]):
-        self.widget = widget
-        self.delay_ms = delay_ms
-        self.callback = callback
-        self._after_id: str | None = None
-
-    def call(self, *args, **kwargs):
-        if self._after_id:
-            with contextlib.suppress(tk.TclError):
-                self.widget.after_cancel(self._after_id)
-
-        def fire():
-            self._after_id = None
-            self.callback(*args, **kwargs)
-
-        with contextlib.suppress(tk.TclError):
-            self._after_id = self.widget.after(self.delay_ms, fire)
-
-    def cancel(self):
-        if self._after_id:
-            with contextlib.suppress(tk.TclError):
-                self.widget.after_cancel(self._after_id)
-            self._after_id = None
-
-
-class FieldValidator:
-    def __init__(
-        self,
-        component: ctk.CTkEntry,
-        var: tk.Variable,
-        ui_state: UIState,
-        var_name: str,
-        max_undo: int = DEFAULT_MAX_UNDO,
-        extra_validate: Callable[[str], str | None] | None = None,
-        required: bool = False,
-    ):
-        self.component = component
-        self.var = var
-        self.ui_state = ui_state
-        self.var_name = var_name
-        self._extra_validate = extra_validate
-        self._required = required
-
-        try:
-            self._original_border_color = component.cget("border_color")
-        except Exception:
-            self._original_border_color = "gray50"
-
-        self._shadow_var = tk.StringVar(master=component)
-        self._shadow_trace_name: str | None = None
-        self._real_var_trace_name: str | None = None
-        self._syncing = False
-        self._touched = False
-        self._bound = False
-
-        self._debounce: DebounceTimer | None = None
-        self._undo_debounce: DebounceTimer | None = None
-        self._undo = UndoHistory(max_undo)
-
-    def attach(self) -> None:
-        self._shadow_var.set(self.var.get())
-        self._swap_textvariable(self._shadow_var)
-
-        self._debounce = DebounceTimer(
-            self.component, DEBOUNCE_TYPING_MS, self._on_debounce_fire
-        )
-        self._undo_debounce = DebounceTimer(
-            self.component, UNDO_DEBOUNCE_MS, self._push_undo_snapshot
-        )
-
-        self._shadow_trace_name = self._shadow_var.trace_add("write", self._on_shadow_write)
-        self._real_var_trace_name = self.var.trace_add("write", self._on_real_var_write)
-
-        self.component.bind("<FocusIn>", self._on_focus_in)
-        self.component.bind("<Key>", self._on_user_input)
-        self.component.bind("<<Paste>>", self._on_user_input)
-        self.component.bind("<<Cut>>", self._on_user_input)
-        self.component.bind("<FocusOut>", self._on_focus_out)
-        self.component.bind("<Control-z>", self._on_undo)
-        self.component.bind("<Control-Z>", self._on_undo)
-        self.component.bind("<Control-Shift-z>", self._on_redo)
-        self.component.bind("<Control-Shift-Z>", self._on_redo)
-        self.component.bind("<Control-y>", self._on_redo)
-        self.component.bind("<Control-Y>", self._on_redo)
-        self.component.bind("<Return>", self._on_enter)
-
-        self._bound = True
-        _active_validators.add(self)
-
-    def detach(self) -> None:
-        if not self._bound:
-            return
-        self._bound = False
-        _active_validators.discard(self)
-
-        self._commit()
-
-        if self._debounce:
-            self._debounce.cancel()
-        if self._undo_debounce:
-            self._undo_debounce.cancel()
-
-        if self._shadow_trace_name:
-            with contextlib.suppress(Exception):
-                self._shadow_var.trace_remove("write", self._shadow_trace_name)
-            self._shadow_trace_name = None
-
-        if self._real_var_trace_name:
-            with contextlib.suppress(Exception):
-                self.var.trace_remove("write", self._real_var_trace_name)
-            self._real_var_trace_name = None
-
-        self._swap_textvariable(self.var)
-
-    def _swap_textvariable(self, new_var: tk.Variable) -> None:
-        comp = self.component
-        if comp._textvariable_callback_name:
-            with contextlib.suppress(Exception):
-                comp._textvariable.trace_remove("write", comp._textvariable_callback_name)  # type: ignore[union-attr]
-            comp._textvariable_callback_name = ""
-
-        comp.configure(textvariable=new_var)
-
-        if new_var is not None:
-            comp._textvariable_callback_name = new_var.trace_add(
-                "write", comp._textvariable_callback
-            )
-
-    def _commit(self) -> None:
-        shadow_val = self._shadow_var.get()
-        if shadow_val != self.var.get():
-            self._syncing = True
-            self.var.set(shadow_val)
-            self._syncing = False
-
-    def validate(self, value: str) -> str | None:
-        """Return an error string if *value* is invalid, else None."""
-        meta = self.ui_state.get_field_metadata(self.var_name)
-        declared_type = meta.type
-        nullable = meta.nullable
-        default_val = meta.default
-
-        if value == "":
-            if self._required:
-                return "Value required"
-            if nullable:
-                return None
-            if declared_type is str:
-                if default_val == "":
-                    return None
-                return "Value required"
-            return None
-
-        try:
-            if declared_type is int:
-                v = int(value)
-                if v < 0:
-                    return "Value must be non-negative"
-            elif declared_type is float:
-                v = float(value)
-                if v < 0:
-                    return "Value must be non-negative"
-            elif declared_type is bool:
-                if value.lower() not in ("true", "false", "0", "1"):
-                    return "Invalid bool"
-        except ValueError:
-            return "Invalid value"
-
-        if self._extra_validate is not None:
-            return self._extra_validate(value)
-
-        return None
-
-    def _apply_error(self) -> None:
-        self.component.configure(border_color=ERROR_BORDER_COLOR)
-
-    def _clear_error(self) -> None:
-        self.component.configure(border_color=self._original_border_color)
-
-    def _validate_and_style(self, value: str) -> bool:
-        error = self.validate(value)
-        if error is None:
-            self._clear_error()
-            return True
+    if path_type == "directory":
+        if is_output:
+            if err := _check_parent_exists(path):
+                return err
         else:
-            self._apply_error()
-            return False
+            if not _folder_exists(path):
+                return _result(False, None, "Directory does not exist.")
+    else:
+        # For files
+        if valid_extensions:
+            if not any(_has_extension(value, ext) for ext in valid_extensions):
+                return _result(False, None, f"File must have one of these extensions: {', '.join(valid_extensions)}")
 
-    def _on_shadow_write(self, *_args) -> None:
-        if self._syncing:
-            return
-        if not self._touched:
-            # external sync or initial set — commit immediately
-            self._commit()
-            if self._debounce:
-                self._debounce.cancel()
-            return
-        if self._debounce:
-            self._debounce.call()
-        if self._undo_debounce:
-            self._undo_debounce.call()
-
-    def _on_real_var_write(self, *_args) -> None:
-        if self._syncing:
-            return
-        # external change (preset load, file dialog, etc) — sync to shadow var
-        self._syncing = True
-        self._shadow_var.set(self.var.get())
-        self._syncing = False
-        self._validate_and_style(self._shadow_var.get())
-
-    def _push_undo_snapshot(self) -> None:
-        self._undo.push(self._shadow_var.get())
-
-    def _on_debounce_fire(self) -> None:
-        val = self._shadow_var.get()
-        if self._validate_and_style(val):
-            self._commit()
-
-    def _on_focus_in(self, _e=None) -> None:
-        self._touched = False
-        self._undo.push(self._shadow_var.get())
-
-    def _on_user_input(self, _e=None) -> None:
-        self._touched = True
-
-    def _on_focus_out(self, _e=None) -> None:
-        if self._debounce:
-            self._debounce.cancel()
-        if self._undo_debounce:
-            self._undo_debounce.cancel()
-        if self._touched:
-            if self._validate_and_style(self._shadow_var.get()):
-                self._commit()
-        self._undo.push(self._shadow_var.get())
-
-    def _on_enter(self, _e=None) -> None:
-        if self._debounce:
-            self._debounce.cancel()
-        if self._touched:
-            if self._validate_and_style(self._shadow_var.get()):
-                self._commit()
-
-    def _set_value(self, value: str) -> None:
-        self._syncing = True
-        self._shadow_var.set(value)
-        self._syncing = False
-        if self._validate_and_style(value):
-            self._commit()
-
-    def _on_undo(self, _e=None) -> str:
-        previous = self._undo.undo(self._shadow_var.get())
-        if previous is not None:
-            self._set_value(previous)
-        return "break"
-
-    def _on_redo(self, _e=None) -> str:
-        next_val = self._undo.redo()
-        if next_val is not None:
-            self._set_value(next_val)
-        return "break"
-
-
-class PathValidator(FieldValidator):
-    """FieldValidator with additional path-specific checks."""
-
-    def __init__(
-        self,
-        component: ctk.CTkEntry,
-        var: tk.Variable,
-        ui_state: UIState,
-        var_name: str,
-        io_type: PathIOType = PathIOType.INPUT,
-        max_undo: int = DEFAULT_MAX_UNDO,
-        extra_validate: Callable[[str], str | None] | None = None,
-        required: bool = False,
-    ):
-        super().__init__(component, var, ui_state, var_name, max_undo=max_undo, extra_validate=extra_validate, required=required)
-        self.io_type = io_type
-
-    def _get_var_safe(self, name: str) -> tk.Variable | None:
-        try:
-            return self.ui_state.get_var(name)
-        except (KeyError, AttributeError):
-            return None
-
-    def validate(self, value: str) -> str | None:
-        base_err = super().validate(value)
-        if base_err is not None:
-            return base_err
-        if value == "":
-            return None
-
-        prevent_var = self._get_var_safe("prevent_overwrites")
-        format_var = self._get_var_safe("output_model_format")
-        return validate_path(
-            value,
-            io_type=self.io_type,
-            prevent_overwrites=prevent_var.get() if prevent_var is not None else False,
-            output_format=format_var.get() if format_var is not None else None,
-        )
-
-    def revalidate(self) -> None:
-        if self.component.winfo_exists():
-            self._validate_and_style(self._shadow_var.get())
-
-
-def flush_and_validate_all() -> list[str]:
-    invalid: list[str] = []
-
-    for v in list(_active_validators):
-        if v._debounce:
-            v._debounce.cancel()
-
-        value = v._shadow_var.get()
-        error = v.validate(value)
-
-        if error is not None:
-            v._apply_error()
-            invalid.append(f"{v.var_name}: {error}")
+        if is_output:
+            if err := _check_parent_exists(path):
+                return err
         else:
-            v._clear_error()
-            v._commit()
+            if not path.exists():
+                return _result(False, None, "File does not exist")
 
-    return invalid
+    return _result(True, None, "")

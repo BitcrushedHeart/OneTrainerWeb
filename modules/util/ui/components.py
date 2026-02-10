@@ -6,14 +6,14 @@ from pathlib import Path
 from tkinter import filedialog
 from typing import Any, Literal
 
-from modules.util.enum.PathIOType import PathIOType
+from modules.util.enum.ModelFormat import ModelFormat
 from modules.util.enum.TimeUnit import TimeUnit
 from modules.util.enum.TrainingMethod import TrainingMethod
 from modules.util.path_util import supported_image_extensions
 from modules.util.ui.ToolTip import ToolTip
 from modules.util.ui.ui_utils import DebounceTimer, register_drop_target
 from modules.util.ui.UIState import UIState
-from modules.util.ui.validation import DEFAULT_MAX_UNDO, FieldValidator, PathValidator
+from modules.util.ui.validation import ValidationResult, validate_basic_type, validate_destination, validate_file_path
 
 import customtkinter as ctk
 from customtkinter.windows.widgets.scaling import CTkScalingBaseClass
@@ -391,15 +391,14 @@ def entry(
         column,
         ui_state: UIState,
         var_name: str,
-        command: Callable[[], None] | None = None,
+        command: Callable[[], None] = None,
         tooltip: str = "",
         wide_tooltip: bool = False,
         width: int = 140,
-        sticky: str = "new",
-        max_undo: int | None = None,
-        validator_factory: Callable[..., FieldValidator] | None = None,
-        extra_validate: Callable[[str], str | None] | None = None,
-        required: bool = False,
+        sticky: str = "ew",
+        custom_validator: Callable[[str], ValidationResult] | None = None,
+        validation_state: ValidationState = None,
+        enable_hover_validation: bool = False,
 ):
 
     var = ui_state.get_var(var_name)
@@ -410,40 +409,61 @@ def entry(
     component = ctk.CTkEntry(master, textvariable=var, width=width)
     component.grid(row=row, column=column, padx=PAD, pady=PAD, sticky=sticky)
 
-    if validator_factory is not None:
-        validator = validator_factory(
-            component, var, ui_state, var_name,
-            max_undo=max_undo or DEFAULT_MAX_UNDO,
-            extra_validate=extra_validate,
-            required=required,
-        )
-    else:
-        validator = FieldValidator(
-            component, var, ui_state, var_name,
-            max_undo=max_undo or DEFAULT_MAX_UNDO,
-            extra_validate=extra_validate,
-            required=required,
-        )
-    validator.attach()
-    component._validator = validator  # type: ignore[attr-defined]
+    validation_handler = EntryValidationHandler(
+        component=component,
+        var=var,
+        var_name=var_name,
+        ui_state=ui_state,
+        custom_validator=custom_validator,
+        validation_state=validation_state,
+    )
+    validation_trace_name = var.trace_add("write", validation_handler.debounced_validate)
+
+    component.bind("<FocusIn>", validation_handler.on_focus_in)
+    component.bind("<FocusOut>", validation_handler.on_focus_out)
+    for event in ("<Key>", "<<Paste>>", "<<Cut>>"):
+        component.bind(event, validation_handler.on_user_input)
+
+    if enable_hover_validation and validation_state:
+        try:
+            show_tooltips_var = ui_state.get_var("validation_show_tooltips")
+        except (KeyError, AttributeError):
+            show_tooltips_var = None
+
+        validation_tooltip = validation_handler.validation_tooltip
+
+        def on_hover_enter(_e=None):
+            if show_tooltips_var and not _safe_bool(show_tooltips_var):
+                return
+
+            if validation_state.status == 'error':
+                validation_tooltip.show_error(validation_state.message, duration_ms=None)
+            elif validation_state.status == 'warning':
+                validation_tooltip.show_warning(validation_state.message, duration_ms=None)
+
+        def on_hover_leave(_e=None):
+            validation_tooltip.hide()
+
+        component.bind("<Enter>", on_hover_enter, add="+")
+        component.bind("<Leave>", on_hover_leave, add="+")
 
     original_destroy = component.destroy
 
     def new_destroy():
         # 'temporary' fix until https://github.com/TomSchimansky/CustomTkinter/pull/2077 is merged
-        # unfortunately Tom has admitted to forgetting about how to maintain CTK so this likely will never be merged
         if component._textvariable_callback_name:
-            component._textvariable.trace_remove("write", component._textvariable_callback_name)  # type: ignore[union-attr]
+            component._textvariable.trace_remove("write", component._textvariable_callback_name)
             component._textvariable_callback_name = ""
 
-        validator.detach()
+        validation_handler.cleanup()
+        var.trace_remove("write", validation_trace_name)
 
         if command is not None and trace_id is not None:
             ui_state.remove_var_trace(var_name, trace_id)
 
         original_destroy()
 
-    component.destroy = new_destroy  # type: ignore[assignment]
+    component.destroy = new_destroy
 
     if tooltip:
         ToolTip(component, tooltip, wide=wide_tooltip)
@@ -452,40 +472,75 @@ def entry(
 
 
 def path_entry(
-        master, row, column, ui_state: UIState, var_name: str,
-        *,
-        mode: Literal["file", "dir"] = "file",
-        io_type: PathIOType = PathIOType.INPUT,
-        path_modifier: Callable[[str], str] | None = None,
+        master,
+        row,
+        column,
+        ui_state: UIState,
+        var_name: str,
+        path_modifier: Callable[[str], str] = None,
+        is_output: bool = False,
+        path_type: str = "file",  # "file" or "directory"
+        command: Callable[[str], None] = None,
         allow_model_files: bool = True,
         allow_image_files: bool = False,
-        command: Callable[[str], None] | None = None,
-        required: bool = False,
+        valid_extensions: list[str] = None,
+        use_model_validator: bool = False,
+        format_var_name: str = "output_model_format",
+        method_var_name: str = "training_method",
+        prefix_var_name: str = "save_filename_prefix",
+        width: int = 140,
+        sticky: str = "new",
 ):
     frame = ctk.CTkFrame(master, fg_color="transparent")
     frame.grid(row=row, column=column, padx=1, pady=1, sticky=sticky)
     frame.grid_columnconfigure(0, weight=1)
 
-    def _path_validator_factory(comp, var, state, name, **kw):
-        return PathValidator(comp, var, state, name, io_type=io_type, **kw)
+    if not is_output:
+        meta = ui_state.get_field_metadata(var_name)
+        is_output = getattr(meta, 'is_output', False)
 
-    entry_component = entry(
+    var = ui_state.get_var(var_name)
+
+    if use_model_validator:
+        validator = ModelOutputValidator(
+            var=var, ui_state=ui_state,
+            format_var_name=format_var_name,
+            method_var_name=method_var_name,
+            prefix_var_name=prefix_var_name,
+        )
+        validation_state = validator.state
+        custom_validator = validator.validate
+    else:
+        validator = None
+        validation_state = None
+
+        def simple_path_validator(value: str) -> ValidationResult:
+            if value and path_type == "directory":
+                path = Path(value)
+                trimmed_name = path.name.strip()
+                if trimmed_name != path.name:
+                    sep = '\\' if '\\' in value else '/'
+                    parent_str = str(path.parent)
+                    trimmed_path = f"{parent_str}{sep}{trimmed_name}" if parent_str != '.' else trimmed_name
+                    var.set(trimmed_path)
+                    value = trimmed_path
+            return validate_file_path(value, is_output, valid_extensions, path_type)
+
+        custom_validator = simple_path_validator
+
+    entry_widget = entry(
         frame, row=0, column=0, ui_state=ui_state, var_name=var_name,
-        validator_factory=_path_validator_factory,
-        required=required,
+        custom_validator=custom_validator,
+        validation_state=validation_state,
+        enable_hover_validation=bool(validator),
+        command=command,
+        width=width,
+        sticky="ew",
     )
 
-    trace_ids = []
-    if io_type in (PathIOType.OUTPUT, PathIOType.MODEL):
-        validator = getattr(entry_component, '_validator', None)
-        if validator is not None:
-            for dep_var_name in ("prevent_overwrites", "output_model_format"):
-                with contextlib.suppress(KeyError, AttributeError):
-                    dep_var = ui_state.get_var(dep_var_name)
-                    tid = dep_var.trace_add("write", lambda *_a: validator.revalidate())
-                    trace_ids.append((dep_var, tid))
-
-    use_save_dialog = io_type in (PathIOType.OUTPUT, PathIOType.MODEL)
+    if validator:
+        validator.set_widget(entry_widget)
+        validator.setup_traces()
 
     original_destroy = entry_widget.destroy
 
@@ -555,9 +610,35 @@ def path_entry(
     return frame
 
 
-def time_entry(master, row, column, ui_state: UIState, var_name: str, unit_var_name, supports_time_units: bool = True):
+def app_title(master, row, column):
+    frame = ctk.CTkFrame(master)
+    frame.grid(row=row, column=column, padx=5, pady=5, sticky="nsew")
+
+    image_component = ctk.CTkImage(
+        Image.open("resources/icons/icon.png").resize((40, 40), Image.Resampling.LANCZOS),
+        size=(40, 40)
+    )
+    ctk.CTkLabel(frame, image=image_component, text="").grid(row=0, column=0, padx=PAD, pady=PAD)
+
+    label_component = ctk.CTkLabel(frame, text="OneTrainer", font=ctk.CTkFont(size=20, weight="bold"))
+    label_component.grid(row=0, column=1, padx=(0, PAD), pady=PAD)
+
+
+def label(master, row, column, text, pad=PAD, tooltip=None, wide_tooltip=False, wraplength=0, font=None):
+    kwargs = {"text": text, "wraplength": wraplength}
+    if font is not None:
+        kwargs["font"] = font
+    component = ctk.CTkLabel(master, **kwargs)
+    component.grid(row=row, column=column, padx=pad, pady=pad, sticky="nw")
+    if tooltip:
+        ToolTip(component, tooltip, wide=wide_tooltip)
+    return component
+
+
+def time_entry(master, row, column, ui_state: UIState, var_name: str, unit_var_name, supports_time_units: bool = True,
+               width: int = 50, unit_width: int = 100, sticky: str = "new"):
     frame = ctk.CTkFrame(master, fg_color="transparent")
-    frame.grid(row=row, column=column, padx=0, pady=0, sticky="new")
+    frame.grid(row=row, column=column, padx=0, pady=0, sticky=sticky)
 
     frame.grid_columnconfigure(0, weight=0)
     frame.grid_columnconfigure(1, weight=1)
@@ -578,113 +659,6 @@ def time_entry(master, row, column, ui_state: UIState, var_name: str, unit_var_n
 
     return frame
 
-def layer_filter_entry(master, row, column, ui_state: UIState, preset_var_name: str, preset_label: str, preset_tooltip: str, presets, entry_var_name, entry_tooltip: str, regex_var_name, regex_tooltip: str, frame_color=None):
-    frame = ctk.CTkFrame(master=master, corner_radius=5, fg_color=frame_color)
-    frame.grid(row=row, column=column, padx=5, pady=5, sticky="nsew")
-    frame.grid_columnconfigure(0, weight=1)
-
-    layer_entry = entry(
-        frame, 1, 0, ui_state, entry_var_name,
-        tooltip=entry_tooltip
-    )
-    layer_entry_fg_color = layer_entry.cget("fg_color")
-    layer_entry_text_color = layer_entry.cget("text_color")
-
-    regex_label = label(
-        frame, 2, 0, "Use Regex",
-        tooltip=regex_tooltip,
-    )
-    regex_switch = switch(
-        frame, 2, 1, ui_state, regex_var_name
-    )
-
-    # Let the user set their own layer filter
-    # TODO
-    #if self.train_config.layer_filter and self.train_config.layer_filter_preset == "custom":
-    #    self.prior_custom = self.train_config.layer_filter
-    #else:
-    #    self.prior_custom = ""
-
-    layer_entry.grid_configure(columnspan=2, sticky="ew")
-
-    presets_list = list(presets.keys()) + ["custom"]
-
-
-    def hide_layer_entry():
-        if layer_entry and layer_entry.winfo_manager():
-            layer_entry.grid_remove()
-
-    def show_layer_entry():
-        if layer_entry and not layer_entry.winfo_manager():
-            layer_entry.grid()
-
-
-    def preset_set_layer_choice(selected: str):
-        if not selected or selected not in presets_list:
-            selected = presets_list[0]
-
-        if selected == "custom":
-            # Allow editing + regex toggle
-            show_layer_entry()
-            layer_entry.configure(state="normal", fg_color=layer_entry_fg_color, text_color=layer_entry_text_color)
-            #layer_entry.cget('textvariable').set("")
-            regex_label.grid()
-            regex_switch.grid()
-        else:
-            # Preserve custom text before overwriting
-            #if self.prior_selected == "custom":
-            #    self.prior_custom = self.layer_entry.get()
-
-            # Resolve preset definition (list[str] OR {'patterns': [...], 'regex': bool})
-            preset_def = presets.get(selected, [])
-            if isinstance(preset_def, dict):
-                patterns = preset_def.get("patterns", [])
-                preset_uses_regex = bool(preset_def.get("regex", False))
-            else:
-                patterns = preset_def
-                preset_uses_regex = False
-
-            disabled_color = ("gray85", "gray17")
-            disabled_text_color = ("gray30", "gray70")
-            layer_entry.configure(state="disabled", fg_color=disabled_color, text_color=disabled_text_color)
-            layer_entry.cget('textvariable').set(",".join(patterns))
-
-            ui_state.get_var(entry_var_name).set(",".join(patterns))
-            ui_state.get_var(regex_var_name).set(preset_uses_regex)
-
-            regex_label.grid_remove()
-            regex_switch.grid_remove()
-
-            if selected == "full" and not patterns:
-                hide_layer_entry()
-            else:
-                show_layer_entry()
-
-#        self.prior_selected = selected
-
-    label(frame, 0, 0, preset_label,
-                     tooltip=preset_tooltip)
-
-
-    ui_state.remove_all_var_traces(preset_var_name)
-
-    layer_selector = options(
-        frame, 0, 1, presets_list, ui_state, preset_var_name,
-        command=preset_set_layer_choice
-    )
-
-    def on_layer_filter_preset_change():
-        if not layer_selector:
-            return
-        selected = ui_state.get_var(preset_var_name).get()
-        preset_set_layer_choice(selected)
-
-    ui_state.add_var_trace(
-        preset_var_name,
-        on_layer_filter_preset_change,
-    )
-
-    preset_set_layer_choice(layer_selector.get())
 
 def icon_button(master, row, column, text, command):
     component = ctk.CTkButton(master, text=text, width=40, command=command)
@@ -704,28 +678,18 @@ def button(master, row, column, text, command, tooltip=None, **kwargs):
     return component
 
 
-def options(master, row, column, values, ui_state: UIState, var_name: str, command: Callable[[str], None] | None = None):
-    component = ctk.CTkOptionMenu(master, values=values, variable=ui_state.get_var(var_name), command=command)
-    component.grid(row=row, column=column, padx=PAD, pady=(PAD, PAD), sticky="new")
+def options(master, row, column, values, ui_state: UIState, var_name: str, command: Callable[[str], None] = None,
+            width: int = 140, sticky: str = "new"):
+    component = ctk.CTkOptionMenu(master, values=values, variable=ui_state.get_var(var_name), command=command, width=width)
+    component.grid(row=row, column=column, padx=PAD, pady=(PAD, PAD), sticky=sticky)
 
-    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
-    def create_destroy(component):
-        orig_destroy = component.destroy
-
-        def destroy(self):
-            orig_destroy()
-            CTkScalingBaseClass.destroy(self)
-
-        return destroy
-
-    destroy = create_destroy(component._dropdown_menu)
-    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
+    _wrap_dropdown_destroy(component)
 
     return component
 
 
 def options_adv(master, row, column, values, ui_state: UIState, var_name: str,
-                command: Callable[[str], None] | None = None, adv_command: Callable[[], None] | None = None):
+                command: Callable[[str], None] = None, adv_command: Callable[[], None] = None):
     frame = ctk.CTkFrame(master, fg_color="transparent")
     frame.grid(row=row, column=column, padx=0, pady=0, sticky="new")
 
@@ -740,24 +704,13 @@ def options_adv(master, row, column, values, ui_state: UIState, var_name: str,
     if command:
         command(ui_state.get_var(var_name).get())  # call command once to set the initial value
 
-    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
-    def create_destroy(component):
-        orig_destroy = component.destroy
-
-        def destroy(self):
-            orig_destroy()
-            CTkScalingBaseClass.destroy(self)
-
-        return destroy
-
-    destroy = create_destroy(component._dropdown_menu)
-    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
+    _wrap_dropdown_destroy(component)
 
     return frame, {'component': component, 'button_component': button_component}
 
 
 def options_kv(master, row, column, values: list[tuple[str, Any]], ui_state: UIState, var_name: str,
-               command: Callable[[Any], None] | None = None):
+               command: Callable[[Any], None] = None, width: int = 140, sticky: str = "new"):
     var = ui_state.get_var(var_name)
 
     if var.get() not in [str(value) for key, value in values] and values:
@@ -792,18 +745,7 @@ def options_kv(master, row, column, values: list[tuple[str, Any]], ui_state: UIS
     var.trace_add("write", lambda _0, _1, _2: update_var())
     update_var()  # call update_var once to set the initial value
 
-    # temporary fix until https://github.com/TomSchimansky/CustomTkinter/pull/2246 is merged
-    def create_destroy(component):
-        orig_destroy = component.destroy
-
-        def destroy(self):
-            orig_destroy()
-            CTkScalingBaseClass.destroy(self)
-
-        return destroy
-
-    destroy = create_destroy(component._dropdown_menu)
-    component._dropdown_menu.destroy = lambda: destroy(component._dropdown_menu)  # type: ignore[assignment]
+    _wrap_dropdown_destroy(component)
 
     return component
 
@@ -814,7 +756,7 @@ def switch(
         column,
         ui_state: UIState,
         var_name: str,
-        command: Callable[[], None] | None = None,
+        command: Callable[[], None] = None,
         text: str = "",
 ):
     var = ui_state.get_var(var_name)
@@ -831,12 +773,7 @@ def switch(
             ui_state.remove_var_trace(var_name, trace_id)
         original_destroy()
 
-            orig_destroy()
-
-        return destroy
-
-    destroy = create_destroy(component)
-    component.destroy = lambda: destroy(component)  # type: ignore[assignment]
+    component.destroy = new_destroy
 
     return component
 
