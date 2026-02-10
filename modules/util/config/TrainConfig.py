@@ -385,6 +385,7 @@ class TrainConfig(BaseConfig):
     gradient_reduce_prevision: GradientReducePrecision
     fused_gradient_reduce: bool
     async_gradient_reduce: bool
+    sequential_model_setup: bool
     async_gradient_reduce_buffer: int
 
     # model settings
@@ -997,6 +998,7 @@ class TrainConfig(BaseConfig):
         data.append(("fused_gradient_reduce", True, bool, False))
         data.append(("async_gradient_reduce", True, bool, False))
         data.append(("async_gradient_reduce_buffer", 100, int, False))
+        data.append(("sequential_model_setup", False, bool, False))
 
         # model settings
         data.append(("base_model_name", "stable-diffusion-v1-5/stable-diffusion-v1-5", str, False))
