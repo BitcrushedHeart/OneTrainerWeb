@@ -487,50 +487,70 @@ def path_entry(
 
     use_save_dialog = io_type in (PathIOType.OUTPUT, PathIOType.MODEL)
 
-    def __open_dialog():
-        if mode == "dir":
-            chosen = filedialog.askdirectory()
+    original_destroy = entry_widget.destroy
+
+    def new_destroy():
+        if validator:
+            validator.cleanup_traces()
+        original_destroy()
+
+    entry_widget.destroy = new_destroy
+
+    register_drop_target(entry_widget, ui_state, var_name, command)
+
+    # Browse button
+    def open_dialog():
+        parent = master.winfo_toplevel()
+        if path_type == "directory":
+            selected_path = filedialog.askdirectory(parent=parent)
         else:
-            filetypes = [
-                ("All Files", "*.*"),
-            ]
+            filetypes = []
+
+            if valid_extensions:
+                ext_patterns = ' '.join(f"*{ext}" for ext in valid_extensions)
+                ext_name = valid_extensions[0].lstrip('.').upper() if len(valid_extensions) == 1 else "Supported Files"
+                filetypes.append((ext_name, ext_patterns))
 
             if allow_model_files:
-                filetypes.extend([
-                    ("Diffusers", "model_index.json"),
-                    ("Checkpoint", "*.ckpt *.pt *.bin"),
-                    ("Safetensors", "*.safetensors"),
-                ])
+                current_format = ui_state.get_var(format_var_name).get() if use_model_validator else None
+                indices = {
+                    ModelFormat.DIFFUSERS.value: 1,
+                    ModelFormat.CKPT.value: 2,
+                    ModelFormat.SAFETENSORS.value: 3,
+                    ModelFormat.LEGACY_SAFETENSORS.value: 3,
+                }
+
+                if index := indices.get(current_format):
+                    filetypes.append(MODEL_FILETYPES[index])
+                else:
+                    filetypes.extend(MODEL_FILETYPES[1:])
             if allow_image_files:
-                filetypes.extend([
-                    ("Image", ' '.join([f"*.{x}" for x in supported_image_extensions()])),
-                ])
+                filetypes.append(("Image", ' '.join(f"*.{x}" for x in supported_image_extensions())))
 
-            if use_save_dialog:
-                chosen = filedialog.asksaveasfilename(filetypes=filetypes)
+            filetypes.append(("All Files", "*.*"))
+
+            default_ext = valid_extensions[0] if valid_extensions else None
+
+            if is_output:
+                kwargs = {"filetypes": filetypes, "parent": parent}
+                if default_ext:
+                    kwargs["defaultextension"] = default_ext
+                selected_path = filedialog.asksaveasfilename(**kwargs)
             else:
-                chosen = filedialog.askopenfilename(filetypes=filetypes)
+                selected_path = filedialog.askopenfilename(filetypes=filetypes, parent=parent)
 
-        if chosen:
+        if selected_path:
             if path_modifier:
-                chosen = path_modifier(chosen)
-
-            ui_state.get_var(var_name).set(chosen)
-
+                selected_path = path_modifier(selected_path)
+            var.set(selected_path)
             if command:
-                command(chosen)
+                command(selected_path)
+
+            parent.lift()
+            parent.focus_force()
 
     button_component = ctk.CTkButton(frame, text="...", width=40, command=open_dialog)
     button_component.grid(row=0, column=1, padx=(0, PAD), pady=PAD, sticky="nsew")
-
-    if trace_ids:
-        original_frame_destroy = frame.destroy
-        def _frame_destroy():
-            for dep_var, tid in trace_ids:
-                with contextlib.suppress(tk.TclError, ValueError):
-                    dep_var.trace_remove("write", tid)
-            original_frame_destroy()
-        frame.destroy = _frame_destroy  # type: ignore[assignment]
 
     return frame
 
