@@ -37,3 +37,12 @@ pixi.toml
 train.bat
 debug_report.log
 config_diff.txt
+
+
+# Webdev
+
+OneTrainerWeb.md
+FeasibilityStudy.md
+.claude
+CLAUDE.md
+web/gui/brand.md

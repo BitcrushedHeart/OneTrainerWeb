@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+/* ── Dark mode via data-theme attribute ── */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ── OneTrainerWeb Design Tokens ── */
+@theme {
+  /* Primary (pink/purple) */
+  --color-orchid-600: #C218E8;
+  --color-violet-500: #8A4DFF;
+  --color-plum-800: #4B0E5F;
+  --color-indigo-700: #3A1F8C;
+  --color-lavender-50: #F9F5FF;
+  --color-ink-950: #120B17;
+
+  /* Semantic */
+  --color-success-500: #2DD4BF;
+  --color-warning-500: #FBBF24;
+  --color-error-500: #F87171;
+  --color-info-500: #7C8CFF;
+
+  /* Theme-aware (light defaults, overridden in [data-theme="dark"]) */
+  --color-surface: #F9F5FF;
+  --color-on-surface: #24172D;
+  --color-on-surface-secondary: #6D5C7A;
+  --color-border-subtle: rgba(0, 0, 0, 0.06);
+  --color-gradient-start: #C218E8;
+  --color-gradient-end: #8A4DFF;
+
+  /* Typography */
+  --font-sans: "Inter", "Google Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Roboto Mono", Consolas, monospace;
+  --font-display: "Inter", "Google Sans", sans-serif;
+
+  /* Type scale */
+  --text-display: 4.5rem;
+  --text-h1: 2.5rem;
+  --text-h2: 1.75rem;
+  --text-h3: 1.25rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-micro: 0.75rem;
+
+  /* Border radius */
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-full: 9999px;
+
+  /* Elevation */
+  --shadow-1: 0 4px 12px rgba(18, 11, 23, 0.12);
+  --shadow-2: 0 8px 24px rgba(18, 11, 23, 0.18);
+  --shadow-3: 0 12px 32px rgba(18, 11, 23, 0.26);
+
+  /* Animations */
+  --animate-shimmer: shimmer 1s linear infinite;
+  --animate-row-fade: rowFade 0.2s ease-out;
+  --animate-pulse-error: pulseError 2s infinite;
+  --animate-tab-slide: tabSlide 250ms ease-out;
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  @keyframes rowFade {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+
+  @keyframes pulseError {
+    0%, 100% { text-shadow: 0 0 0 transparent; }
+    50% { text-shadow: 0 0 6px var(--color-error-500); }
+  }
+
+  @keyframes tabSlide {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+}
+
+/* ── Theme: Nightcode (Dark) overrides ── */
+[data-theme="dark"] {
+  --color-surface: #120B17;
+  --color-on-surface: #F7F0FF;
+  --color-on-surface-secondary: #A6A0B5;
+  --color-border-subtle: rgba(255, 255, 255, 0.12);
+  --color-gradient-start: #4B0E5F;
+  --color-gradient-end: #3A1F8C;
+  color-scheme: dark;
+}
+
+/* ── Non-theme custom properties ── */
+:root {
+  --trans-base: 200ms ease-out;
+  --spacing-unit: 8px;
+}
+
+/* ── Base styles ── */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 800ms ease, color 800ms ease;
+  color-scheme: light;
+}
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+}
+
+/* Tabular numbers for data displays */
+table, .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Glass morphism card ── */
+.card {
+  background: rgba(249, 245, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(120%);
+  border: 1px solid rgba(247, 240, 255, 0.16);
+  box-shadow: var(--shadow-2);
+  border-radius: var(--radius-md);
+  transition: box-shadow var(--trans-base), transform var(--trans-base);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-3);
+  transform: translateY(-2px);
+}
+
+/* ── Focus rings (accessibility) ── */
+:focus-visible {
+  outline: 3px solid var(--color-orchid-600);
+  outline-offset: 2px;
+}
+
+/* ── Gradient accent ── */
+.gradient-accent {
+  background: linear-gradient(135deg, var(--color-gradient-start), var(--color-gradient-end));
+}
+
+/* ── Skeleton shimmer ── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-border-subtle) 25%,
+    rgba(255, 255, 255, 0.05) 50%,
+    var(--color-border-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
