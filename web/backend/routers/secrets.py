@@ -3,14 +3,10 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
+from web.backend.paths import SECRETS_PATH
 from web.backend.services.config_service import ConfigService
 
 router = APIRouter(prefix="/secrets", tags=["secrets"])
-
-# secrets.json lives at the project root alongside training_presets/
-_SECRETS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "secrets.json")
-)
 
 # Fields whose values should be masked in GET responses
 _SENSITIVE_FIELDS = {"huggingface_token", "api_key", "password"}
@@ -47,14 +43,14 @@ def get_secrets() -> dict:
     Load secrets from secrets.json. Sensitive values are masked in the
     response (only the last 4 characters are visible).
     """
-    if not os.path.isfile(_SECRETS_PATH):
+    if not os.path.isfile(SECRETS_PATH):
         # Return the default structure with empty values
         service = ConfigService.get_instance()
         raw = service.config.secrets.to_dict()
         return _mask_secrets(raw)
 
     try:
-        with open(_SECRETS_PATH, "r", encoding="utf-8") as f:
+        with open(SECRETS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         raise HTTPException(status_code=500, detail=f"Failed to read secrets: {exc}") from exc
@@ -72,9 +68,9 @@ def save_secrets(body: dict) -> dict:
     """
     # Load existing secrets so masked fields can be preserved
     existing: dict = {}
-    if os.path.isfile(_SECRETS_PATH):
+    if os.path.isfile(SECRETS_PATH):
         try:
-            with open(_SECRETS_PATH, "r", encoding="utf-8") as f:
+            with open(SECRETS_PATH, "r", encoding="utf-8") as f:
                 existing = json.load(f)
         except (json.JSONDecodeError, OSError):
             existing = {}
@@ -86,8 +82,8 @@ def save_secrets(body: dict) -> dict:
     service.config.secrets.from_dict(merged)
 
     try:
-        os.makedirs(os.path.dirname(_SECRETS_PATH), exist_ok=True)
-        with open(_SECRETS_PATH, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
+        with open(SECRETS_PATH, "w", encoding="utf-8") as f:
             json.dump(merged, f, indent=4)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Failed to write secrets: {exc}") from exc

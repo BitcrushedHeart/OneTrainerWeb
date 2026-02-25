@@ -1,6 +1,12 @@
 import type { TrainConfig, ConceptConfig, SampleConfig, SecretsConfig } from "@/types/generated/config";
 
-const API_BASE = "/api";
+// In Vite dev mode, relative "/api" is proxied to the backend by Vite's
+// dev server.  In Electron production mode the renderer loads from a
+// file:// URL, so relative paths don't resolve to the backend.  We detect
+// this and use the absolute backend URL instead.
+const isFileProtocol =
+  typeof window !== "undefined" && window.location.protocol === "file:";
+const API_BASE = isFileProtocol ? "http://localhost:8000/api" : "/api";
 
 // ---------------------------------------------------------------------------
 // Generic request helper
@@ -145,4 +151,33 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify(secrets),
     }),
+
+  // -- Tensorboard -----------------------------------------------------------
+
+  /** List available training runs. */
+  tensorboardRuns: () => request<string[]>("/tensorboard/runs"),
+
+  /** List all scalar tags for a specific run. */
+  tensorboardTags: (run: string) =>
+    request<string[]>(`/tensorboard/scalars?run=${encodeURIComponent(run)}`),
+
+  /** Fetch scalar data for a specific tag within a run. */
+  tensorboardScalars: (run: string, tag: string, afterStep?: number) =>
+    request<Array<{ wall_time: number; step: number; value: number }>>(
+      `/tensorboard/scalars/${encodeURIComponent(tag)}?run=${encodeURIComponent(run)}${afterStep != null ? `&after_step=${afterStep}` : ""}`,
+    ),
+
+  /** Get the resolved tensorboard log directory config. */
+  tensorboardConfig: () =>
+    request<{ log_dir: string; exists: boolean }>("/tensorboard/config"),
+
+  // -- Wiki -----------------------------------------------------------------
+
+  /** Fetch the organized list of wiki page sections. */
+  wikiPages: () =>
+    request<Array<{ title: string; pages: string[] }>>("/wiki/pages"),
+
+  /** Fetch the markdown content for a specific wiki page. */
+  wikiPage: (slug: string) =>
+    request<{ slug: string; content: string }>(`/wiki/pages/${encodeURIComponent(slug)}`),
 };

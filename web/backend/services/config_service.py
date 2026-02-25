@@ -14,10 +14,12 @@ from contextlib import suppress
 from modules.util.config.SecretsConfig import SecretsConfig
 from modules.util.config.TrainConfig import TrainConfig
 
+from web.backend.services._singleton import SingletonMixin
+
 logger = logging.getLogger(__name__)
 
 
-class ConfigService:
+class ConfigService(SingletonMixin):
     """
     Thread-safe singleton that owns the authoritative TrainConfig instance.
 
@@ -25,8 +27,7 @@ class ConfigService:
     constructing TrainConfig objects directly.
     """
 
-    _instance: "ConfigService | None" = None
-    _lock: threading.Lock = threading.Lock()
+    _validate_lock: threading.Lock = threading.Lock()
 
     def __init__(self) -> None:
         self.config: TrainConfig = TrainConfig.default_values()
@@ -38,20 +39,6 @@ class ConfigService:
         # making the serialised form stable for round-trip tests.
         self.config.from_dict(self.config.to_dict())
         self._config_lock = threading.Lock()
-
-    # ------------------------------------------------------------------
-    # Singleton access
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def get_instance(cls) -> "ConfigService":
-        """Return the process-wide ConfigService, creating it on first call."""
-        if cls._instance is None:
-            with cls._lock:
-                # Double-checked locking
-                if cls._instance is None:
-                    cls._instance = cls()
-        return cls._instance
 
     # ------------------------------------------------------------------
     # Basic CRUD
@@ -77,7 +64,9 @@ class ConfigService:
         (e.g. migration_8 accesses ``data["model_type"]`` unconditionally).
         """
         with self._config_lock:
-            # Ensure migrations are not triggered on partial payloads.
+            # Partial updates from the frontend omit __version. Injecting the current
+            # version prevents from_dict() from running migrations on sparse payloads,
+            # which would crash on missing keys (e.g., migration 8 accesses model_type).
             if "__version" not in data:
                 data["__version"] = self.config.config_version
             self.config.from_dict(data)
@@ -228,21 +217,51 @@ class ConfigService:
         migration issues (same pattern as ``update_config``), then attempts
         ``from_dict()``.
 
+        Because ``BaseConfig.from_dict()`` silently swallows type-coercion
+        failures (printing "Could not set <field> as <value>" to stdout),
+        we capture stdout during the call and treat those messages as
+        validation errors.
+
         Returns:
             ``{"valid": True}`` on success, or
             ``{"valid": False, "errors": [...]}`` on failure.
         """
+        import io
+        import sys
+
         # Inject __version so migrations don't fire on partial payloads.
         validation_data = dict(data)
         if "__version" not in validation_data:
             validation_data["__version"] = TrainConfig.default_values().config_version
 
-        try:
-            test_config = TrainConfig.default_values()
-            test_config.from_dict(validation_data)
-            return {"valid": True}
-        except Exception as exc:
-            return {"valid": False, "errors": [str(exc)]}
+        errors: list[str] = []
+
+        # Capture stdout to detect silent from_dict failures.
+        # A lock is required because redirecting sys.stdout is process-global;
+        # without it, concurrent validate calls would interleave output and
+        # return incorrect error messages.
+        with self._validate_lock:
+            captured = io.StringIO()
+            old_stdout = sys.stdout
+            try:
+                sys.stdout = captured
+                test_config = TrainConfig.default_values()
+                test_config.from_dict(validation_data)
+            except Exception as exc:
+                errors.append(str(exc))
+            finally:
+                sys.stdout = old_stdout
+
+            # Parse "Could not set <field> as <value>" messages from from_dict.
+            output = captured.getvalue()
+            for line in output.splitlines():
+                line = line.strip()
+                if line:
+                    errors.append(line)
+
+        if errors:
+            return {"valid": False, "errors": errors}
+        return {"valid": True}
 
     # ------------------------------------------------------------------
     # Export / pack

@@ -86,6 +86,9 @@ interface ConfigState {
   /** Human-readable error message from the last failed operation, or `null`. */
   error: string | null;
 
+  /** Name of the currently loaded preset, or `null` if using defaults. */
+  loadedPresetName: string | null;
+
   // -- Actions --------------------------------------------------------------
 
   /** Fetch the current config from the backend and replace local state. */
@@ -111,10 +114,16 @@ interface ConfigState {
   syncToBackend: () => Promise<void>;
 
   /** Load a preset by path. Replaces the local config with the preset. */
-  loadPreset: (presetPath: string) => Promise<void>;
+  loadPreset: (presetPath: string, presetName?: string) => Promise<void>;
 
   /** Save the current config as a named preset. */
   savePreset: (name: string) => Promise<void>;
+
+  /**
+   * Auto-load a preset on startup. Tries the last-used preset first,
+   * then falls back to a Z-Image preset, then to any available preset.
+   */
+  autoLoadPreset: () => Promise<void>;
 
   /**
    * Change the optimizer and reload server-computed defaults.
@@ -145,6 +154,7 @@ export const useConfigStore = create<ConfigState>()(
     isDirty: false,
     isLoading: false,
     error: null,
+    loadedPresetName: null,
 
     // -- loadConfig ---------------------------------------------------------
 
@@ -242,7 +252,7 @@ export const useConfigStore = create<ConfigState>()(
 
     // -- loadPreset ---------------------------------------------------------
 
-    loadPreset: async (presetPath: string) => {
+    loadPreset: async (presetPath: string, presetName?: string) => {
       cancelPendingSync();
 
       set((draft) => {
@@ -252,11 +262,15 @@ export const useConfigStore = create<ConfigState>()(
 
       try {
         const config = await configApi.loadPreset(presetPath);
+        const name = presetName ?? presetPath.replace(/.*[/\\]/, "").replace(/\.json$/, "");
         set((draft) => {
           draft.config = config;
           draft.isDirty = false;
           draft.isLoading = false;
+          draft.loadedPresetName = name;
         });
+        // Persist last-used preset for auto-load on next startup
+        try { localStorage.setItem("onetrainer_last_preset", presetPath); } catch { /* ignore */ }
       } catch (err) {
         set((draft) => {
           draft.error = err instanceof Error ? err.message : String(err);
@@ -290,6 +304,40 @@ export const useConfigStore = create<ConfigState>()(
           draft.error = err instanceof Error ? err.message : String(err);
           draft.isLoading = false;
         });
+      }
+    },
+
+    // -- autoLoadPreset -----------------------------------------------------
+
+    autoLoadPreset: async () => {
+      try {
+        const presets = await configApi.listPresets();
+        if (presets.length === 0) return;
+
+        // 1. Try last-used preset
+        const lastPath = localStorage.getItem("onetrainer_last_preset");
+        if (lastPath) {
+          const match = presets.find((p) => p.path === lastPath);
+          if (match) {
+            await get().loadPreset(match.path, match.name);
+            return;
+          }
+        }
+
+        // 2. Try Z-Image preset (user preference)
+        const zImage = presets.find((p) => p.name.toLowerCase().includes("z-image") || p.name.toLowerCase().includes("z_image"));
+        if (zImage) {
+          await get().loadPreset(zImage.path, zImage.name);
+          return;
+        }
+
+        // 3. Fallback: load first built-in preset
+        const builtin = presets.find((p) => p.is_builtin);
+        if (builtin) {
+          await get().loadPreset(builtin.path, builtin.name);
+        }
+      } catch {
+        // Auto-load is best-effort; don't fail startup
       }
     },
 

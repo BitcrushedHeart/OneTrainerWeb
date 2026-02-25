@@ -3,16 +3,10 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from web.backend.paths import PRESETS_DIR
 from web.backend.services.config_service import ConfigService
 
 router = APIRouter(prefix="/presets", tags=["presets"])
-
-# Resolve training_presets directory relative to the project root.
-# main.py inserts the project root at sys.path[0], so we derive it
-# from the location of this file: routers/ -> backend/ -> web/ -> root.
-_PRESETS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "training_presets")
-)
 
 
 class PresetInfo(BaseModel):
@@ -37,15 +31,15 @@ def list_presets() -> list[PresetInfo]:
     """
     presets: list[PresetInfo] = []
 
-    if not os.path.isdir(_PRESETS_DIR):
+    if not os.path.isdir(PRESETS_DIR):
         return presets
 
-    for filename in sorted(os.listdir(_PRESETS_DIR)):
+    for filename in sorted(os.listdir(PRESETS_DIR)):
         if not filename.endswith(".json"):
             continue
         name = filename.removesuffix(".json")
         is_builtin = name.startswith("#")
-        full_path = os.path.join(_PRESETS_DIR, filename)
+        full_path = os.path.join(PRESETS_DIR, filename)
         presets.append(PresetInfo(name=name, path=full_path, is_builtin=is_builtin))
 
     return presets
@@ -80,7 +74,7 @@ def save_preset(body: SavePresetRequest) -> dict:
     if name.startswith("#"):
         raise HTTPException(status_code=403, detail="Cannot save a preset with a name starting with '#' (reserved for built-in presets)")
 
-    path = os.path.join(_PRESETS_DIR, f"{name}.json")
+    path = os.path.join(PRESETS_DIR, f"{name}.json")
     service = ConfigService.get_instance()
     try:
         service.save_preset(path)
@@ -99,7 +93,7 @@ def delete_preset(name: str) -> dict:
     if name.startswith("#"):
         raise HTTPException(status_code=403, detail="Cannot delete built-in presets")
 
-    path = os.path.join(_PRESETS_DIR, f"{name}.json")
+    path = os.path.join(PRESETS_DIR, f"{name}.json")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Preset not found: {name}")
 

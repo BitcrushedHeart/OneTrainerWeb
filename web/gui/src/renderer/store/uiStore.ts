@@ -10,12 +10,14 @@ export type TabId =
   | "sampling"
   | "backup"
   | "tools"
+  | "tensorboard"
   | "embeddings"
   | "cloud"
   | "lora"
   | "embedding"
   | "performance"
-  | "run";
+  | "run"
+  | "help";
 
 interface UiState {
   activeTab: TabId;

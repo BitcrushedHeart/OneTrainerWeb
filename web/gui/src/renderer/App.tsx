@@ -1,108 +1,93 @@
-import { useEffect } from "react";
-import { useUiStore, type TabId } from "./store/uiStore";
+import { lazy, Suspense, useEffect } from "react";
+import { useUiStore } from "./store/uiStore";
+import { useConfigStore } from "./store/configStore";
+import { useTrainingStore } from "./store/trainingStore";
 import { configApi } from "./api/configApi";
+import { useTrainingWebSocket } from "./hooks/useTrainingWebSocket";
+import TopBar from "./components/layout/TopBar";
+import BottomBar from "./components/layout/BottomBar";
+import TabNavigation from "./components/layout/TabNavigation";
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: "general", label: "General" },
-  { id: "model", label: "Model" },
-  { id: "data", label: "Data" },
-  { id: "concepts", label: "Concepts" },
-  { id: "training", label: "Training" },
-  { id: "sampling", label: "Sampling" },
-  { id: "backup", label: "Backup" },
-  { id: "tools", label: "Tools" },
-  { id: "embeddings", label: "Additional Embeddings" },
-  { id: "cloud", label: "Cloud" },
-  { id: "performance", label: "Performance" },
-  { id: "run", label: "Run" },
-];
-
-function TopBar() {
-  const { theme, toggleTheme, backendConnected } = useUiStore();
-
-  return (
-    <header className="top-bar">
-      <div className="top-bar-left">
-        <h1 className="top-bar-title">OneTrainerWeb</h1>
-        <span className={`connection-status ${backendConnected ? "connected" : "disconnected"}`}>
-          {backendConnected ? "Connected" : "Disconnected"}
-        </span>
-      </div>
-      <div className="top-bar-right">
-        <button
-          onClick={toggleTheme}
-          className="theme-toggle"
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? "Daybreak" : "Nightcode"}
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function TabNavigation() {
-  const { activeTab, setActiveTab } = useUiStore();
-
-  return (
-    <nav className="tab-nav" role="tablist">
-      {TABS.map((tab) => (
-        <button
-          key={tab.id}
-          role="tab"
-          aria-selected={activeTab === tab.id}
-          className={`tab-button ${activeTab === tab.id ? "active" : ""}`}
-          onClick={() => setActiveTab(tab.id)}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </nav>
-  );
-}
+// Lazy-loaded page components for code splitting
+const GeneralPage = lazy(() => import("./pages/GeneralPage"));
+const ModelPage = lazy(() => import("./pages/ModelPage"));
+const DataPage = lazy(() => import("./pages/DataPage"));
+const ConceptsPage = lazy(() => import("./pages/ConceptsPage"));
+const TrainingPage = lazy(() => import("./pages/TrainingPage"));
+const SamplingPage = lazy(() => import("./pages/SamplingPage"));
+const BackupPage = lazy(() => import("./pages/BackupPage"));
+const ToolsPage = lazy(() => import("./pages/ToolsPage"));
+const LoraPage = lazy(() => import("./pages/LoraPage"));
+const EmbeddingPage = lazy(() => import("./pages/EmbeddingPage"));
+const AdditionalEmbeddingsPage = lazy(() => import("./pages/AdditionalEmbeddingsPage"));
+const CloudPage = lazy(() => import("./pages/CloudPage"));
+const TensorboardPage = lazy(() => import("./pages/TensorboardPage"));
+const PerformancePage = lazy(() => import("./pages/PerformancePage"));
+const RunPage = lazy(() => import("./pages/RunPage"));
+const HelpPage = lazy(() => import("./pages/HelpPage"));
 
 function TabContent() {
-  const { activeTab } = useUiStore();
+  const activeTab = useUiStore((s) => s.activeTab);
 
-  return (
-    <main className="tab-content" role="tabpanel">
-      <div className="card" style={{ padding: "24px" }}>
-        <h2 style={{ margin: 0 }}>
-          {TABS.find((t) => t.id === activeTab)?.label ?? activeTab}
-        </h2>
-        <p style={{ color: "var(--color-on-surface-secondary)", marginTop: "8px" }}>
-          Tab content will be implemented in Phase 3.
-        </p>
-      </div>
-    </main>
-  );
-}
-
-function BottomBar() {
-  return (
-    <footer className="bottom-bar">
-      <div className="bottom-bar-left">
-        <div className="progress-placeholder">
-          <span style={{ color: "var(--color-on-surface-secondary)", fontSize: "14px" }}>
-            Ready
-          </span>
+  switch (activeTab) {
+    case "general":
+      return <GeneralPage />;
+    case "model":
+      return <ModelPage />;
+    case "data":
+      return <DataPage />;
+    case "concepts":
+      return <ConceptsPage />;
+    case "training":
+      return <TrainingPage />;
+    case "sampling":
+      return <SamplingPage />;
+    case "backup":
+      return <BackupPage />;
+    case "tools":
+      return <ToolsPage />;
+    case "lora":
+      return <LoraPage />;
+    case "embedding":
+      return <EmbeddingPage />;
+    case "embeddings":
+      return <AdditionalEmbeddingsPage />;
+    case "cloud":
+      return <CloudPage />;
+    case "tensorboard":
+      return <TensorboardPage />;
+    case "performance":
+      return <PerformancePage />;
+    case "run":
+      return <RunPage />;
+    case "help":
+      return <HelpPage />;
+    default:
+      return (
+        <div className="card" style={{ padding: "24px" }}>
+          <h2 style={{ margin: 0 }}>{activeTab}</h2>
+          <p style={{ color: "var(--color-on-surface-secondary)", marginTop: "8px" }}>
+            This tab will be implemented soon.
+          </p>
         </div>
-      </div>
-      <div className="bottom-bar-right">
-        <button className="action-button" disabled>
-          Start Training
-        </button>
-      </div>
-    </footer>
-  );
+      );
+  }
 }
 
 export default function App() {
-  const { setBackendConnected } = useUiStore();
+  const activeTab = useUiStore((s) => s.activeTab);
+  const setBackendConnected = useUiStore((s) => s.setBackendConnected);
+  const backendConnected = useUiStore((s) => s.backendConnected);
+  const loadConfig = useConfigStore((s) => s.loadConfig);
+  const autoLoadPreset = useConfigStore((s) => s.autoLoadPreset);
+  const fetchTrainingStatus = useTrainingStore((s) => s.fetchStatus);
 
+  // Connect to training WebSocket when backend is available
+  useTrainingWebSocket(backendConnected);
+
+  // Health check polling
   useEffect(() => {
     let cancelled = false;
-
     const checkHealth = async () => {
       try {
         const data = await configApi.health();
@@ -113,22 +98,41 @@ export default function App() {
         if (!cancelled) setBackendConnected(false);
       }
     };
-
-    // Poll health every 5s
     checkHealth();
     const interval = setInterval(checkHealth, 5000);
-
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, [setBackendConnected]);
 
+  // On backend connect: load config, auto-load last preset, and recover training state
+  useEffect(() => {
+    if (!backendConnected) return;
+    const init = async () => {
+      await loadConfig();
+      await autoLoadPreset();
+      await fetchTrainingStatus();
+    };
+    init();
+  }, [backendConnected, loadConfig, autoLoadPreset, fetchTrainingStatus]);
+
   return (
     <div className="app-shell">
       <TopBar />
       <TabNavigation />
-      <TabContent />
+      <main
+        className="tab-content"
+        role="tabpanel"
+        id={`tabpanel-${activeTab}`}
+        aria-labelledby={`tab-${activeTab}`}
+      >
+        <div className="tab-content-inner">
+          <Suspense fallback={<div className="skeleton" style={{ height: 200 }} aria-busy="true" aria-label="Loading page" />}>
+            <TabContent />
+          </Suspense>
+        </div>
+      </main>
       <BottomBar />
     </div>
   );

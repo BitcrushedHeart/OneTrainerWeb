@@ -15,6 +15,7 @@ missing fields are filled in and migrations are applied.
 import json
 import logging
 import os
+from typing import Any
 
 from modules.util.config.ConceptConfig import ConceptConfig
 from modules.util.config.SampleConfig import SampleConfig
@@ -32,6 +33,39 @@ class ConceptService:
     """
 
     # ------------------------------------------------------------------
+    # Generic private helpers
+    # ------------------------------------------------------------------
+
+    def _load_list(self, file_path: str, config_class: Any) -> list[dict]:
+        """
+        Load a JSON array from *file_path* and round-trip each entry through
+        ``config_class.default_values().from_dict()`` to apply migrations and
+        fill missing fields.
+
+        Raises ``FileNotFoundError`` if the file does not exist.
+        """
+        with open(file_path, "r", encoding="utf-8") as fh:
+            raw_list: list[dict] = json.load(fh)
+
+        return [config_class.default_values().from_dict(entry).to_dict() for entry in raw_list]
+
+    def _save_list(self, file_path: str, items: list[dict], config_class: Any) -> None:
+        """
+        Round-trip each dict in *items* through ``config_class`` for
+        normalisation, then write the resulting array to *file_path* as JSON.
+
+        Parent directories are created if they do not already exist.
+        """
+        normalised = [config_class.default_values().from_dict(entry).to_dict() for entry in items]
+
+        parent = os.path.dirname(file_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        with open(file_path, "w", encoding="utf-8") as fh:
+            json.dump(normalised, fh, indent=4)
+
+    # ------------------------------------------------------------------
     # Concepts
     # ------------------------------------------------------------------
 
@@ -47,14 +81,7 @@ class ConceptService:
 
         Raises ``FileNotFoundError`` if the file does not exist.
         """
-        with open(file_path, "r", encoding="utf-8") as fh:
-            raw_list: list[dict] = json.load(fh)
-
-        concepts: list[dict] = []
-        for entry in raw_list:
-            config = ConceptConfig.default_values().from_dict(entry)
-            concepts.append(config.to_dict())
-        return concepts
+        return self._load_list(file_path, ConceptConfig)
 
     def save_concepts(self, file_path: str, concepts: list[dict]) -> None:
         """
@@ -65,17 +92,7 @@ class ConceptService:
 
         Parent directories are created if they do not already exist.
         """
-        normalised: list[dict] = []
-        for entry in concepts:
-            config = ConceptConfig.default_values().from_dict(entry)
-            normalised.append(config.to_dict())
-
-        parent = os.path.dirname(file_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
-        with open(file_path, "w", encoding="utf-8") as fh:
-            json.dump(normalised, fh, indent=4)
+        self._save_list(file_path, concepts, ConceptConfig)
 
     # ------------------------------------------------------------------
     # Samples
@@ -92,14 +109,7 @@ class ConceptService:
 
         Raises ``FileNotFoundError`` if the file does not exist.
         """
-        with open(file_path, "r", encoding="utf-8") as fh:
-            raw_list: list[dict] = json.load(fh)
-
-        samples: list[dict] = []
-        for entry in raw_list:
-            config = SampleConfig.default_values().from_dict(entry)
-            samples.append(config.to_dict())
-        return samples
+        return self._load_list(file_path, SampleConfig)
 
     def save_samples(self, file_path: str, samples: list[dict]) -> None:
         """
@@ -110,14 +120,4 @@ class ConceptService:
 
         Parent directories are created if they do not already exist.
         """
-        normalised: list[dict] = []
-        for entry in samples:
-            config = SampleConfig.default_values().from_dict(entry)
-            normalised.append(config.to_dict())
-
-        parent = os.path.dirname(file_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
-        with open(file_path, "w", encoding="utf-8") as fh:
-            json.dump(normalised, fh, indent=4)
+        self._save_list(file_path, samples, SampleConfig)

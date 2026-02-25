@@ -21,11 +21,17 @@
 
   /* Theme-aware (light defaults, overridden in [data-theme="dark"]) */
   --color-surface: #F9F5FF;
+  --color-surface-sunken: #F3EDF8;
+  --color-surface-raised: #FFFFFF;
+  --color-input-bg: #F3EDF8;
   --color-on-surface: #24172D;
   --color-on-surface-secondary: #6D5C7A;
   --color-border-subtle: rgba(0, 0, 0, 0.06);
+  --color-border-focus: var(--color-orchid-600);
   --color-gradient-start: #C218E8;
   --color-gradient-end: #8A4DFF;
+  --color-logo-gradient-start: #C218E8;
+  --color-logo-gradient-end: #8A4DFF;
 
   /* Typography */
   --font-sans: "Inter", "Google Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
@@ -48,9 +54,15 @@
   --radius-full: 9999px;
 
   /* Elevation */
-  --shadow-1: 0 4px 12px rgba(18, 11, 23, 0.12);
-  --shadow-2: 0 8px 24px rgba(18, 11, 23, 0.18);
-  --shadow-3: 0 12px 32px rgba(18, 11, 23, 0.26);
+  --shadow-1: 0 2px 8px rgba(18, 11, 23, 0.08), 0 1px 2px rgba(18, 11, 23, 0.06);
+  --shadow-2: 0 4px 16px rgba(18, 11, 23, 0.12), 0 2px 4px rgba(18, 11, 23, 0.08);
+  --shadow-3: 0 8px 24px rgba(18, 11, 23, 0.16), 0 4px 8px rgba(18, 11, 23, 0.10);
+  --shadow-inset-focus: inset 0 0 0 1px var(--color-orchid-600), 0 0 0 3px rgba(194, 24, 232, 0.15);
+
+  /* Content layout */
+  --content-max-width: 1400px;
+  --content-padding-x: 40px;
+  --content-padding-y: 32px;
 
   /* Animations */
   --animate-shimmer: shimmer 1s linear infinite;
@@ -74,19 +86,53 @@
   }
 
   @keyframes tabSlide {
-    from { transform: scaleX(0); }
-    to { transform: scaleX(1); }
+    from { transform: scaleX(0); opacity: 0; }
+    to { transform: scaleX(1); opacity: 1; }
   }
+
+  @keyframes sectionReveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  --animate-section-reveal: sectionReveal 300ms ease-out both;
+  --animate-path-draw: pathDraw 250ms ease-out;
+}
+
+@keyframes pathDraw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+.icon-path-draw svg {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: var(--animate-path-draw);
 }
 
 /* ── Theme: Nightcode (Dark) overrides ── */
 [data-theme="dark"] {
   --color-surface: #120B17;
+  --color-surface-sunken: #0D0811;
+  --color-surface-raised: #1A1122;
+  --color-input-bg: #16101E;
   --color-on-surface: #F7F0FF;
   --color-on-surface-secondary: #A6A0B5;
-  --color-border-subtle: rgba(255, 255, 255, 0.12);
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-focus: var(--color-orchid-600);
   --color-gradient-start: #4B0E5F;
   --color-gradient-end: #3A1F8C;
+  --color-logo-gradient-start: #C218E8;
+  --color-logo-gradient-end: #8A4DFF;
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, 0.24), 0 1px 2px rgba(0, 0, 0, 0.16);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.32), 0 2px 4px rgba(0, 0, 0, 0.20);
+  --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.40), 0 4px 8px rgba(0, 0, 0, 0.24);
   color-scheme: dark;
 }
 
@@ -118,25 +164,68 @@ table, .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Scrollbar styling ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-subtle) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-subtle);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-on-surface-secondary);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.20);
+}
+
 /* ── Glass morphism card ── */
 .card {
-  background: rgba(249, 245, 255, 0.08);
-  backdrop-filter: blur(20px) saturate(120%);
-  border: 1px solid rgba(247, 240, 255, 0.16);
-  box-shadow: var(--shadow-2);
-  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  backdrop-filter: blur(12px) saturate(110%);
+  border: 1px solid var(--color-border-subtle);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-sm);
   transition: box-shadow var(--trans-base), transform var(--trans-base);
 }
 
+[data-theme="dark"] .card {
+  background: rgba(26, 17, 34, 0.65);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
 .card:hover {
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-2);
   transform: translateY(-2px);
 }
 
-/* ── Focus rings (accessibility) ── */
-:focus-visible {
-  outline: 3px solid var(--color-orchid-600);
+.card.card-static:hover {
+  transform: none;
+  box-shadow: var(--shadow-1);
+}
+
+/* ── Focus rings (accessibility) — twin-gradient ring ── */
+*:focus-visible {
+  outline: 3px solid transparent;
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--color-orchid-600), 0 0 0 4px var(--color-violet-500);
 }
 
 /* ── Gradient accent ── */
@@ -163,5 +252,38 @@ table, .tabular-nums {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── High contrast mode (WCAG AA) ── */
+@media (prefers-contrast: more) {
+  :root {
+    --color-orchid-600: #C218E8;
+    --color-violet-500: #8A4DFF;
+    --color-border-subtle: #888;
+    --color-on-surface-secondary: #555;
+  }
+
+  [data-theme="dark"] {
+    --color-border-subtle: #999;
+    --color-on-surface-secondary: #ccc;
+  }
+
+  .card, .card-static {
+    border-width: 2px;
+  }
+
+  .tab-button.active::after {
+    background: var(--color-orchid-600) !important;
+  }
+  .top-bar-title {
+    background: none !important;
+    -webkit-background-clip: unset !important;
+    background-clip: unset !important;
+    -webkit-text-fill-color: var(--color-orchid-600) !important;
+    color: var(--color-orchid-600) !important;
+  }
+  .action-button {
+    background: var(--color-orchid-600) !important;
   }
 }
