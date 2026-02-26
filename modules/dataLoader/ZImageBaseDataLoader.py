@@ -2,6 +2,8 @@ import os
 
 from modules.dataLoader.BaseDataLoader import BaseDataLoader
 from modules.dataLoader.mixin.DataLoaderText2ImageMixin import DataLoaderText2ImageMixin
+from modules.dataLoader.zimage.PadTokens import PadTokens
+from modules.dataLoader.zimage.StripPaddedTokens import StripPaddedTokens
 from modules.model.BaseModel import BaseModel
 from modules.model.ZImageModel import PROMPT_MAX_LENGTH, ZImageModel, format_input
 from modules.modelSetup.BaseModelSetup import BaseModelSetup
@@ -46,6 +48,13 @@ class ZImageBaseDataLoader(
             modules.append(downscale_mask)
 
         modules += [tokenize_prompt, encode_prompt]
+
+        if config.latent_caching:
+            modules.append(StripPaddedTokens(
+                tokens_name='tokens',
+                tokens_mask_name='tokens_mask',
+                hidden_state_name='text_encoder_hidden_state',
+            ))
         return modules
 
     def _cache_modules(self, config: TrainConfig, model: ZImageModel, model_setup: BaseZImageSetup):
@@ -89,7 +98,7 @@ class ZImageBaseDataLoader(
 
         output_names.append('text_encoder_hidden_state')
 
-        return self._output_modules_from_out_names(
+        output_module_list = self._output_modules_from_out_names(
             model, model_setup,
             output_names=output_names,
             config=config,
@@ -98,6 +107,16 @@ class ZImageBaseDataLoader(
             autocast_context=[model.autocast_context],
             train_dtype=model.train_dtype,
         )
+
+        if config.latent_caching:
+            output_module_list = [PadTokens(
+                tokens_name='tokens',
+                tokens_mask_name='tokens_mask',
+                hidden_state_name='text_encoder_hidden_state',
+                max_length=PROMPT_MAX_LENGTH,
+            )] + output_module_list
+
+        return output_module_list
 
     def _debug_modules(self, config: TrainConfig, model: ZImageModel):
         debug_dir = os.path.join(config.debug_dir, "dataloader")
