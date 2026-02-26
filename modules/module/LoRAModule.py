@@ -523,6 +523,7 @@ class DoRAOFTModule(OFTModule):
 
         # Initialize learnable magnitude vector to the initial norm
         self.dora_scale = nn.Parameter(self.initial_norm.clone())
+        self.dora_scale._is_dora_scale = True
 
     def check_initialized(self):
         super().check_initialized()
@@ -537,10 +538,7 @@ class DoRAOFTModule(OFTModule):
         # Remove the original bias temporarily
         bias = self.orig_module.bias
         if bias is not None:
-            if isinstance(self.orig_module, nn.Conv2d):
-                bias_view = bias.view(1, -1, 1, 1)
-            else:
-                bias_view = bias
+            bias_view = bias.view(1, -1, 1, 1) if isinstance(self.orig_module, nn.Conv2d) else bias
             result = result - bias_view
 
         # Apply DoRA Scaling
@@ -719,7 +717,7 @@ class LoRAModuleWrapper:
             else:
                  self.klass = OFTModule
                  self.dummy_klass = DummyOFTModule
-                 
+
             self.additional_args = [
                 config.oft_block_size,
                 config.oft_coft,
