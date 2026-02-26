@@ -10,6 +10,7 @@ from modules.util.config.ConceptConfig import ConceptConfig
 from modules.util.config.SampleConfig import SampleConfig
 from modules.util.config.SecretsConfig import SecretsConfig
 from modules.util.enum.AudioFormat import AudioFormat
+from modules.util.enum.CenteredWDMode import CenteredWDMode
 from modules.util.enum.ConfigPart import ConfigPart
 from modules.util.enum.DataType import DataType
 from modules.util.enum.EMAMode import EMAMode
@@ -143,6 +144,13 @@ class TrainOptimizerConfig(BaseConfig):
     kappa_p: float
     auto_kappa_p: False
     compile: False
+    spectral_normalization: False
+    scaled_optm: False
+    freeze_on_flip: False
+    l1_adaptive: False
+    centered_wd: float
+    centered_wd_mode: CenteredWDMode
+    factored_2nd: False
 
     def __init__(self, data: list[(str, Any, type, bool)]):
         super().__init__(data)
@@ -261,6 +269,13 @@ class TrainOptimizerConfig(BaseConfig):
         data.append(("kappa_p", None, float, True))
         data.append(("auto_kappa_p", False, bool, False))
         data.append(("compile", False, bool, False))
+        data.append(("spectral_normalization", False, bool, False))
+        data.append(("scaled_optm", False, bool, False))
+        data.append(("freeze_on_flip", False, bool, False))
+        data.append(("l1_adaptive", False, bool, False))
+        data.append(("centered_wd", 0.0, float, False))
+        data.append(("centered_wd_mode", CenteredWDMode.FLOAT8, CenteredWDMode, False))
+        data.append(("factored_2nd", False, bool, False))
 
         return TrainOptimizerConfig(data)
 
