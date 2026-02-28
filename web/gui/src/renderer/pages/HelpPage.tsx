@@ -1,5 +1,39 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { configApi } from "@/api/configApi";
+
+// Configure DOMPurify to strip dangerous content while allowing safe HTML
+const SANITIZE_CONFIG: DOMPurify.Config = {
+  ALLOWED_TAGS: [
+    "p", "h1", "h2", "h3", "h4", "h5", "h6",
+    "a", "img",
+    "ul", "ol", "li",
+    "code", "pre",
+    "em", "strong", "del",
+    "blockquote",
+    "table", "tr", "td", "th", "thead", "tbody",
+    "br", "hr",
+    "div", "span",
+  ],
+  ALLOWED_ATTR: ["href", "src", "alt", "class", "id", "loading", "target", "rel"],
+  ALLOW_DATA_ATTR: false,
+};
+
+// External links open in a new tab; fragment anchors (#section) stay in-page
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    const href = node.getAttribute("href") ?? "";
+    const isExternal = href.startsWith("http://") || href.startsWith("https://") || href.startsWith("//");
+    if (isExternal) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  }
+});
+
+function sanitizeHtml(dirty: string): string {
+  return DOMPurify.sanitize(dirty, SANITIZE_CONFIG as Parameters<typeof DOMPurify.sanitize>[1]);
+}
 
 interface WikiSection {
   title: string;
@@ -315,10 +349,11 @@ export default function HelpPage() {
     }
   }, [sections, fetchPage]);
 
-  // Convert markdown content to HTML
+  // Convert markdown content to HTML, then sanitize to prevent XSS
   const renderedHtml = useMemo(() => {
     if (!content) return "";
-    return markdownToHtml(content);
+    const rawHtml = markdownToHtml(content);
+    return sanitizeHtml(rawHtml);
   }, [content]);
 
   return (

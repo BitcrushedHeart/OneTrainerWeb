@@ -106,7 +106,7 @@ def _collect_system_info() -> str:
             lines.append(f"CUDA Version: {torch.version.cuda}")
             for i in range(torch.cuda.device_count()):
                 name = torch.cuda.get_device_name(i)
-                mem = torch.cuda.get_device_properties(i).total_mem
+                mem = torch.cuda.get_device_properties(i).total_memory
                 mem_gb = round(mem / (1024**3), 2)
                 lines.append(f"  GPU {i}: {name} ({mem_gb} GB)")
     except ImportError:

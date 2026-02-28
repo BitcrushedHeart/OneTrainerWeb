@@ -137,7 +137,7 @@ class MonitorService(SingletonMixin):
             try:
                 name = torch.cuda.get_device_name(i)
                 mem_allocated = torch.cuda.memory_allocated(i)
-                mem_total = torch.cuda.get_device_properties(i).total_mem
+                mem_total = torch.cuda.get_device_properties(i).total_memory
                 vram_used_mb = round(mem_allocated / (1024 ** 2), 1)
                 vram_total_mb = round(mem_total / (1024 ** 2), 1)
                 vram_percent = round((mem_allocated / mem_total) * 100, 1) if mem_total > 0 else 0.0
@@ -190,7 +190,7 @@ class MonitorService(SingletonMixin):
                 gpus.append({
                     "index": i,
                     "name": props.name,
-                    "vram_total_mb": round(props.total_mem / (1024 ** 2), 1),
+                    "vram_total_mb": round(props.total_memory / (1024 ** 2), 1),
                 })
             return gpus
         except Exception:  # noqa: BLE001

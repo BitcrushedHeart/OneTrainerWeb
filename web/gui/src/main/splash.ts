@@ -42,24 +42,15 @@ export function createSplashWindow(): BrowserWindow | null {
   return splashWindow;
 }
 
-function sanitizeMessage(msg: string): string {
-  return msg
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "");
-}
-
 export function updateSplash(
   step: number,
   percent: number,
   message: string,
 ): void {
   if (!splashWindow || splashWindow.isDestroyed()) return;
-  const safeMsg = sanitizeMessage(message);
   splashWindow.webContents
     .executeJavaScript(
-      `updateProgress(${step}, ${percent}, '${safeMsg}')`,
+      `updateProgress(${step}, ${percent}, ${JSON.stringify(message)})`,
     )
     .catch(() => {
       /* splash may have been destroyed */
@@ -68,9 +59,8 @@ export function updateSplash(
 
 export function showSplashError(message: string): void {
   if (!splashWindow || splashWindow.isDestroyed()) return;
-  const safeMsg = sanitizeMessage(message);
   splashWindow.webContents
-    .executeJavaScript(`showError('${safeMsg}')`)
+    .executeJavaScript(`showError(${JSON.stringify(message)})`)
     .catch(() => {
       /* splash may have been destroyed */
     });
