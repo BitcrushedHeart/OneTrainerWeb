@@ -43,8 +43,11 @@ jobs:
           cache: "pip"
           cache-dependency-path: "web/backend/requirements.txt"
 
+      - name: Install PyTorch CPU (required by modules.util.enum and config imports)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install dependencies
-        run: pip install -r web/backend/requirements.txt
+        run: pip install accelerate packaging -r web/backend/requirements.txt
 
       - name: Run tests
         run: >
@@ -80,8 +83,11 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: web/gui
 
+      - name: Install PyTorch CPU (required by modules.util.enum and config imports)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install Python dependencies
-        run: pip install -r web/backend/requirements.txt
+        run: pip install accelerate packaging -r web/backend/requirements.txt
 
       - name: Start backend
         run: |

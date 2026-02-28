@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: web/gui/package-lock.json
 
@@ -65,14 +65,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install minimal Python dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install accelerate packaging
+
       - name: Generate types
         run: python web/scripts/generate_types.py
 
       - name: Check for drift
         run: |
-          if git diff --exit-code web/gui/src/renderer/types/generated/; then
+          if git diff --exit-code web/gui/src/renderer/types/generated/ web/backend/generated/; then
             echo "Generated types are up to date."
           else
             echo "ERROR: Generated types are stale. Run 'python web/scripts/generate_types.py' and commit the results."
+            git diff --stat web/gui/src/renderer/types/generated/ web/backend/generated/
             exit 1
           fi
