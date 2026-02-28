@@ -2,7 +2,10 @@ from enum import Enum
 
 
 class CenteredWDMode(str, Enum):
-    FULL = "full"
-    FLOAT8 = "float8"
-    INT8 = "int8"
-    INT4 = "int4"
+    full = "full"
+    float8 = "float8"
+    int8 = "int8"
+    int4 = "int4"
+
+    def __str__(self):
+        return self.value

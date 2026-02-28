@@ -466,7 +466,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "k_warmup_steps": None,
         "scaled_optm": False,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.ADOPT_ADV: {
         "beta1": 0.9,
@@ -492,7 +492,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "k_warmup_steps": None,
         "scaled_optm": False,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.PRODIGY_ADV: {
         "beta1": 0.9,
@@ -524,7 +524,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "kourkoutas_beta": False,
         "k_warmup_steps": None,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.SIMPLIFIED_AdEMAMix: {
         "beta1": 0.99,
@@ -546,7 +546,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "k_warmup_steps": None,
         "scaled_optm": False,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.SIGNSGD_ADV: {
         "momentum": 0.99,
@@ -563,7 +563,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "l1_adaptive": False,
         "scaled_optm": False,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.LION_ADV: {
         "beta1": 0.9,
@@ -583,7 +583,7 @@ OPTIMIZER_DEFAULT_PARAMETERS = {
         "l1_adaptive": False,
         "scaled_optm": False,
         "centered_wd": 0.0,
-        "centered_wd_mode": CenteredWDMode.FLOAT8,
+        "centered_wd_mode": CenteredWDMode.float8,
     },
     Optimizer.LION_PRODIGY_ADV: {
         "beta1": 0.9,

@@ -5,12 +5,15 @@ from abc import ABCMeta, abstractmethod
 
 from modules.model.BaseModel import BaseModel
 from modules.util.config.TrainConfig import QuantizationConfig
+from modules.util.enum.CenteredWDMode import CenteredWDMode
 from modules.util.enum.ModelType import ModelType
 from modules.util.ModelNames import ModelNames
 from modules.util.ModelWeightDtypes import ModelWeightDtypes
 from modules.util.TrainProgress import TrainProgress
 
 import torch
+
+torch.serialization.add_safe_globals([CenteredWDMode])
 
 
 class BaseModelLoader(metaclass=ABCMeta):

@@ -4,9 +4,12 @@ import os
 from abc import ABCMeta
 
 from modules.model.BaseModel import BaseModel
+from modules.util.enum.CenteredWDMode import CenteredWDMode
 from modules.util.TrainProgress import TrainProgress
 
 import torch
+
+torch.serialization.add_safe_globals([CenteredWDMode])
 
 
 class InternalModelLoaderMixin(metaclass=ABCMeta):

@@ -274,7 +274,7 @@ class TrainOptimizerConfig(BaseConfig):
         data.append(("freeze_on_flip", False, bool, False))
         data.append(("l1_adaptive", False, bool, False))
         data.append(("centered_wd", 0.0, float, False))
-        data.append(("centered_wd_mode", CenteredWDMode.FLOAT8, CenteredWDMode, False))
+        data.append(("centered_wd_mode", CenteredWDMode.float8, CenteredWDMode, False))
         data.append(("factored_2nd", False, bool, False))
 
         return TrainOptimizerConfig(data)
