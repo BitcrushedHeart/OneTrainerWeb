@@ -18,7 +18,7 @@ export interface FormEntryProps {
 
 export const FormEntry = forwardRef<HTMLInputElement, FormEntryProps>(
   ({ label, configPath, value: controlledValue, onChange, type = "text", placeholder, tooltip, disabled, nullable, width }, ref) => {
-    const [configValue, setConfigValue] = useConfigField<string | number | null>(configPath ?? "__unused__");
+    const [configValue, setConfigValue] = useConfigField<string | number | null>(configPath);
 
     const externalValue = configPath ? configValue : controlledValue;
     const [localValue, setLocalValue] = useState<string>(externalValue != null ? String(externalValue) : "");
@@ -34,10 +34,18 @@ export const FormEntry = forwardRef<HTMLInputElement, FormEntryProps>(
         if (configPath && setConfigValue) setConfigValue(null as unknown as string | number);
         return;
       }
-      const parsed = type === "number" ? (raw === "" ? 0 : Number(raw)) : raw;
-      if (type === "number" && isNaN(parsed as number)) return;
-      if (configPath && setConfigValue) setConfigValue(parsed);
-      if (onChange) onChange(parsed);
+      if (type === "number") {
+        // Don't push an empty field as 0 — let the user keep typing.
+        // The config will be updated once a valid number is entered.
+        if (raw === "" || raw === "-") return;
+        const num = Number(raw);
+        if (isNaN(num)) return;
+        if (configPath && setConfigValue) setConfigValue(num);
+        if (onChange) onChange(num);
+      } else {
+        if (configPath && setConfigValue) setConfigValue(raw);
+        if (onChange) onChange(raw);
+      }
     };
 
     return (

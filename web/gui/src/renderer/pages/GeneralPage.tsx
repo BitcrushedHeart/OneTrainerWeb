@@ -1,7 +1,25 @@
+import { useState } from "react";
 import { SectionCard, FormEntry, DirPicker, Toggle, TimeEntry, Select } from "@/components/shared";
 import { GradientReducePrecisionValues } from "@/types/generated/enums";
+import { toolsApi } from "@/api/toolsApi";
+import { Bug, Loader2 } from "lucide-react";
 
 export default function GeneralPage() {
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugStatus, setDebugStatus] = useState<string | null>(null);
+
+  const handleDebugPackage = async () => {
+    setDebugLoading(true);
+    setDebugStatus(null);
+    try {
+      const filename = await toolsApi.downloadDebugPackage();
+      setDebugStatus(`Saved: ${filename}`);
+    } catch (err) {
+      setDebugStatus(err instanceof Error ? err.message : "Failed to generate debug package");
+    } finally {
+      setDebugLoading(false);
+    }
+  };
   return (
     <div className="flex flex-col gap-6">
       <SectionCard title="Workspace">
@@ -14,6 +32,11 @@ export default function GeneralPage() {
             tooltip="Continue training from the last backup"
           />
           <Toggle configPath="only_cache" label="Only Cache" tooltip="Only cache latents, do not train" />
+          <Toggle
+            configPath="prevent_overwrites"
+            label="Prevent Overwrites"
+            tooltip="Prevent accidental overwriting of model output files"
+          />
         </div>
       </SectionCard>
 
@@ -79,6 +102,23 @@ export default function GeneralPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Toggle configPath="debug_mode" label="Debug Mode" tooltip="Enable debug mode for additional logging" />
           <DirPicker label="Debug Directory" configPath="debug_dir" tooltip="Directory for debug output" />
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            className="theme-toggle gap-1.5 px-3 py-1.5"
+            onClick={handleDebugPackage}
+            disabled={debugLoading}
+            title="Generate a zip file with config, system info, and logs for bug reports"
+          >
+            {debugLoading ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
+            ) : (
+              <><Bug className="w-4 h-4" /> Debug Package</>
+            )}
+          </button>
+          {debugStatus && (
+            <span className="text-xs text-[var(--color-on-surface-secondary)]">{debugStatus}</span>
+          )}
         </div>
       </SectionCard>
     </div>

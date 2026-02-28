@@ -2,14 +2,16 @@ import threading
 
 
 class SingletonMixin:
-    """Thread-safe singleton via double-checked locking."""
-
     _instance: "SingletonMixin | None" = None
     _singleton_lock: threading.Lock = threading.Lock()
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._instance = None
+        cls._singleton_lock = threading.Lock()
+
     @classmethod
     def get_instance(cls):
-        """Return the process-wide instance, creating it on first call."""
         if cls._instance is None:
             with cls._singleton_lock:
                 if cls._instance is None:

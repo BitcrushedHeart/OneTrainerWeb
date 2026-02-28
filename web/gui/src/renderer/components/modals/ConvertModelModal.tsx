@@ -4,18 +4,10 @@ import { Button, SelectKV, FilePicker } from "@/components/shared";
 import { toolsApi } from "@/api/toolsApi";
 import type { SelectKVOption } from "@/components/shared";
 
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
-
 export interface ConvertModelModalProps {
   open: boolean;
   onClose: () => void;
 }
-
-// ---------------------------------------------------------------------------
-// Dropdown option data
-// ---------------------------------------------------------------------------
 
 const MODEL_TYPES: SelectKVOption[] = [
   { label: "Stable Diffusion 1.5", value: "STABLE_DIFFUSION_15" },
@@ -55,10 +47,6 @@ const OUTPUT_FORMATS: SelectKVOption[] = [
   { label: "Diffusers", value: "DIFFUSERS" },
 ];
 
-// ---------------------------------------------------------------------------
-// Status types
-// ---------------------------------------------------------------------------
-
 type StatusKind = "ready" | "converting" | "success" | "error";
 
 interface Status {
@@ -68,10 +56,6 @@ interface Status {
 
 const STATUS_READY: Status = { kind: "ready", message: "Ready" };
 const STATUS_CONVERTING: Status = { kind: "converting", message: "Converting..." };
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
   const [modelType, setModelType] = useState("STABLE_DIFFUSION_15");
@@ -127,7 +111,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
   return (
     <ModalBase open={open} onClose={onClose} title="Convert Model" size="md" closeOnBackdrop={!isConverting}>
       <div className="flex flex-col gap-4">
-        {/* Model Type */}
         <SelectKV
           label="Model Type"
           options={MODEL_TYPES}
@@ -137,7 +120,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           tooltip="Type of the model"
         />
 
-        {/* Training Method */}
         <SelectKV
           label="Training Method"
           options={TRAINING_METHODS}
@@ -147,7 +129,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           tooltip="The type of model to convert"
         />
 
-        {/* Input Name */}
         <FilePicker
           label="Input Name"
           value={inputName}
@@ -156,7 +137,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           tooltip="Filename, directory or Hugging Face repository of the model"
         />
 
-        {/* Output Data Type */}
         <SelectKV
           label="Output Data Type"
           options={OUTPUT_DTYPES}
@@ -166,7 +146,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           tooltip="Precision to use when saving the output model"
         />
 
-        {/* Output Format */}
         <SelectKV
           label="Output Format"
           options={OUTPUT_FORMATS}
@@ -176,7 +155,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           tooltip="Format to use when saving the output model"
         />
 
-        {/* Output Destination */}
         <FilePicker
           label="Model Output Destination"
           value={outputDestination}
@@ -186,9 +164,7 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
         />
       </div>
 
-      {/* Footer: status + actions */}
       <div className="flex items-center justify-between mt-6 pt-4 border-t border-[var(--color-border-subtle)]">
-        {/* Status display */}
         <span
           className="text-sm font-medium truncate max-w-[60%]"
           style={{ color: statusColor }}
@@ -197,7 +173,6 @@ export function ConvertModelModal({ open, onClose }: ConvertModelModalProps) {
           {status.message}
         </span>
 
-        {/* Action buttons */}
         <div className="flex gap-3">
           <Button
             variant="primary"

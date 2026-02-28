@@ -1,94 +1,25 @@
-"""
-Singleton service that manages the full training lifecycle.
-
-This mirrors the training logic in ``modules/ui/TrainUI.py`` (start_training,
-__training_thread_function, stop, sample, backup, save) but decouples it
-from the customtkinter GUI layer and exposes it through a clean API that
-the FastAPI routers and WebSocket handlers can call.
-
-All progress and sample data is pushed to the frontend via a pluggable
-``_ws_broadcast`` callback, which is set by the WebSocket module at
-startup.
-"""
-
-import base64
-import io
 import logging
 import threading
 import time
 import traceback
 from collections.abc import Callable
 from contextlib import suppress
-from typing import Any
+from typing import Any, Literal
 
+from web.backend.services._serialization import serialize_sample
 from web.backend.services._singleton import SingletonMixin
 from web.backend.services.concept_service import ConceptService
 from web.backend.services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
 
+TrainingStatus = Literal["idle", "starting", "running", "stopping", "error"]
 
-# ---------------------------------------------------------------------------
-# Helper: serialise ModelSamplerOutput for WebSocket transport
-# ---------------------------------------------------------------------------
-
-def _serialize_sample(sampler_output: Any) -> dict:
-    """
-    Convert a ``ModelSamplerOutput`` into a JSON-friendly dict with base64-
-    encoded payload.
-
-    Handles three file types (IMAGE, VIDEO, AUDIO).  ``FileType`` and
-    ``ModelSamplerOutput`` are imported at call time to avoid pulling in
-    torch/PIL at module scope.
-    """
-    from modules.util.enum.FileType import FileType
-
-    file_type: FileType = sampler_output.file_type
-    data = sampler_output.data
-
-    if file_type == FileType.IMAGE:
-        # PIL Image -> base64-encoded PNG
-        buf = io.BytesIO()
-        data.save(buf, format="PNG")
-        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-        return {"file_type": "IMAGE", "format": "png", "data": encoded}
-
-    if file_type == FileType.VIDEO:
-        if data is None:
-            return {"file_type": "VIDEO", "format": "raw", "data": None}
-        if isinstance(data, bytes):
-            encoded = base64.b64encode(data).decode("ascii")
-            return {"file_type": "VIDEO", "format": "raw", "data": encoded}
-        # torch.Tensor -- drop the data.  The reference implementation's
-        # ``__reduce__`` explicitly discards video tensors; actual video data
-        # is fetched via workspace sync instead.
-        return {"file_type": "VIDEO", "format": "raw", "data": None}
-
-    if file_type == FileType.AUDIO:
-        if data is None:
-            return {"file_type": "AUDIO", "format": "raw", "data": None}
-        encoded = base64.b64encode(data).decode("ascii") if isinstance(data, bytes) else None
-        return {"file_type": "AUDIO", "format": "raw", "data": encoded}
-
-    # Unknown file type -- return a stub so the broadcast never crashes.
-    return {"file_type": str(file_type), "format": "unknown", "data": None}
-
-
-# ---------------------------------------------------------------------------
-# TrainerService
-# ---------------------------------------------------------------------------
 
 class TrainerService(SingletonMixin):
-    """
-    Thread-safe singleton that owns the training thread and exposes
-    lifecycle commands (start, stop, sample, backup, save).
-
-    Communication with the frontend happens exclusively through the
-    ``_ws_broadcast`` callable which is injected by the WebSocket layer.
-    """
 
     def __init__(self) -> None:
-        self._status: str = "idle"  # "idle" | "running" | "stopping" | "error"
+        self._status: TrainingStatus = "idle"
         self._error_message: str | None = None
         self._training_thread: threading.Thread | None = None
         self._training_commands: Any | None = None  # TrainCommands (lazy import)
@@ -97,31 +28,20 @@ class TrainerService(SingletonMixin):
         self._status_lock = threading.Lock()
         self._ws_broadcast: Callable[[dict], None] | None = None
 
-    # ------------------------------------------------------------------
-    # WebSocket broadcast plumbing
-    # ------------------------------------------------------------------
-
     def set_ws_broadcast(self, fn: Callable[[dict], None]) -> None:
-        """Inject the WebSocket broadcast function (set by the WS module)."""
         self._ws_broadcast = fn
 
     def _broadcast(self, message: dict) -> None:
-        """Send *message* to all connected WebSocket clients, swallowing errors."""
         if self._ws_broadcast is not None:
             with suppress(Exception):
                 self._ws_broadcast(message)
 
-    # ------------------------------------------------------------------
-    # Status helpers (thread-safe)
-    # ------------------------------------------------------------------
-
-    def _set_status(self, status: str, error_message: str | None = None) -> None:
+    def _set_status(self, status: TrainingStatus, error_message: str | None = None) -> None:
         with self._status_lock:
             self._status = status
             self._error_message = error_message
 
     def get_status(self) -> dict:
-        """Return a snapshot of the current training status."""
         with self._status_lock:
             return {
                 "status": self._status,
@@ -129,49 +49,30 @@ class TrainerService(SingletonMixin):
                 "start_time": self._start_time,
             }
 
-    # ------------------------------------------------------------------
-    # Training lifecycle
-    # ------------------------------------------------------------------
-
     def start_training(self, reattach: bool = False) -> dict:
-        """
-        Begin a training run.
-
-        Parameters
-        ----------
-        reattach:
-            If ``True``, passed through to ``create.create_trainer()`` so that
-            the trainer reattaches to an existing cloud session instead of
-            starting a new one.
-
-        Returns a dict with ``{"ok": True}`` on success, or
-        ``{"ok": False, "error": "..."}`` if training is already active.
-        """
         with self._status_lock:
-            if self._status in ("running", "stopping"):
+            if self._status in ("running", "stopping", "starting"):
                 return {"ok": False, "error": f"Training is already {self._status}"}
+            self._status = "starting"
 
-        # 1. Flush concepts and samples to disk (mirrors TrainUI.save_default)
+        # Snapshot config so training isn't affected by concurrent edits
         config_service = ConfigService.get_instance()
-        concept_service = ConceptService()
-
-        config = config_service.config
-        with suppress(Exception):
-            concepts = concept_service.load_concepts(config.concept_file_name)
-            concept_service.save_concepts(config.concept_file_name, concepts)
-        with suppress(Exception):
-            samples = concept_service.load_samples(config.sample_definition_file_name)
-            concept_service.save_samples(config.sample_definition_file_name, samples)
-
-        # 2. Deep-copy the config for the training thread
         train_config = config_service.get_config_for_training()
 
-        # 3. TensorBoard management: if the trainer will start its own TB,
-        #    stop the always-on subprocess to avoid port conflicts.
-        if train_config.tensorboard and not train_config.tensorboard_always_on:
-            self._stop_always_on_tensorboard()
+        # Flush concepts/samples to disk before training starts
+        concept_service = ConceptService()
 
-        # 4. Create commands and callbacks
+        with suppress(Exception):
+            concepts = concept_service.load_concepts(train_config.concept_file_name)
+            concept_service.save_concepts(train_config.concept_file_name, concepts)
+        with suppress(Exception):
+            samples = concept_service.load_samples(train_config.sample_definition_file_name)
+            concept_service.save_samples(train_config.sample_definition_file_name, samples)
+
+        # Stop always-on TensorBoard to avoid port conflicts with trainer's TB
+        if train_config.tensorboard and not train_config.tensorboard_always_on:
+            self.stop_always_on_tensorboard()
+
         from modules.util.callbacks.TrainCallbacks import TrainCallbacks
         from modules.util.commands.TrainCommands import TrainCommands
 
@@ -186,20 +87,23 @@ class TrainerService(SingletonMixin):
             on_update_sample_custom_progress=self._on_update_sample_custom_progress,
         )
 
-        # 5. Create trainer (heavy import deferred to here)
         from modules.util import create
 
-        trainer = create.create_trainer(train_config, callbacks, commands, reattach=reattach)
+        try:
+            trainer = create.create_trainer(train_config, callbacks, commands, reattach=reattach)
+        except Exception as e:
+            with self._status_lock:
+                self._status = "idle"
+            return {"ok": False, "error": str(e)}
 
-        # 6. Release GPU memory before starting (mirrors TrainUI.py line 793)
         with suppress(Exception):
             from modules.util.torch_util import torch_gc
             torch_gc()
 
-        # 7. Spawn the training thread
         self._training_commands = commands
         self._training_callbacks = callbacks
-        self._set_status("running")
+        with self._status_lock:
+            self._status = "running"
         self._broadcast({"type": "status", "data": {"text": "Starting training..."}})
 
         thread = threading.Thread(
@@ -213,21 +117,12 @@ class TrainerService(SingletonMixin):
 
         return {"ok": True}
 
-    # ------------------------------------------------------------------
-    # Training thread (mirrors TrainUI.__training_thread_function)
-    # ------------------------------------------------------------------
-
     def _training_thread_fn(self, trainer: Any, config: Any) -> None:
-        """
-        Run inside a dedicated thread.  Follows the same lifecycle as
-        ``TrainUI.__training_thread_function``.
-        """
         error_caught = False
 
         try:
             trainer.start()
 
-            # Persist cloud secrets if cloud training was initialised
             if config.cloud.enabled:
                 with suppress(Exception):
                     from web.backend.services.config_service import ConfigService as _CS
@@ -238,7 +133,6 @@ class TrainerService(SingletonMixin):
             self._start_time = time.monotonic()
             trainer.train()
         except Exception:
-            # Persist cloud secrets on the error path as well (mirrors TrainUI lines 757-758)
             if config.cloud.enabled:
                 with suppress(Exception):
                     from web.backend.services.config_service import ConfigService as _CS
@@ -252,14 +146,13 @@ class TrainerService(SingletonMixin):
             with suppress(Exception):
                 trainer.end()
 
-        # -- Cleanup --
         del trainer
 
-        self._training_thread = None
-        self._training_commands = None
-        self._training_callbacks = None
+        with self._status_lock:
+            self._training_thread = None
+            self._training_commands = None
+            self._training_callbacks = None
 
-        # Release GPU memory
         with suppress(Exception):
             import torch
             torch.clear_autocast_cache()
@@ -267,36 +160,29 @@ class TrainerService(SingletonMixin):
             from modules.util.torch_util import torch_gc
             torch_gc()
 
-        # Update status
         if error_caught:
-            self._set_status("error", "Training failed -- check the console for details")
-            self._broadcast({"type": "status", "data": {"text": "Error: check the console for details"}})
+            self._set_status("error", "Training failed -- check the Terminal panel for details")
+            self._broadcast({"type": "status", "data": {"text": "Error: check the Terminal panel for details"}})
         else:
             self._set_status("idle")
             self._broadcast({"type": "status", "data": {"text": "Stopped"}})
 
         self._start_time = None
 
-        # Restart always-on TensorBoard if it was active before training
         if config.tensorboard_always_on:
             with suppress(Exception):
                 self._start_always_on_tensorboard()
 
-    # ------------------------------------------------------------------
-    # Commands (forwarded to TrainCommands)
-    # ------------------------------------------------------------------
-
     def stop_training(self) -> dict:
-        """Request a graceful training stop."""
         with self._status_lock:
             if self._status != "running":
                 return {"ok": False, "error": "Training is not running"}
             self._status = "stopping"
             self._error_message = None
+            commands = self._training_commands
 
         self._broadcast({"type": "status", "data": {"text": "Stopping..."}})
 
-        commands = self._training_commands
         if commands is not None:
             with suppress(Exception):
                 commands.stop()
@@ -304,8 +190,8 @@ class TrainerService(SingletonMixin):
         return {"ok": True}
 
     def sample_now(self) -> dict:
-        """Request a default sample during training."""
-        commands = self._training_commands
+        with self._status_lock:
+            commands = self._training_commands
         if commands is None:
             return {"ok": False, "error": "Training is not running"}
         with suppress(Exception):
@@ -313,8 +199,8 @@ class TrainerService(SingletonMixin):
         return {"ok": True}
 
     def sample_custom(self, sample_params: Any) -> dict:
-        """Request a custom sample with the given SampleConfig."""
-        commands = self._training_commands
+        with self._status_lock:
+            commands = self._training_commands
         if commands is None:
             return {"ok": False, "error": "Training is not running"}
         with suppress(Exception):
@@ -322,8 +208,8 @@ class TrainerService(SingletonMixin):
         return {"ok": True}
 
     def backup_now(self) -> dict:
-        """Request an immediate backup."""
-        commands = self._training_commands
+        with self._status_lock:
+            commands = self._training_commands
         if commands is None:
             return {"ok": False, "error": "Training is not running"}
         with suppress(Exception):
@@ -331,17 +217,13 @@ class TrainerService(SingletonMixin):
         return {"ok": True}
 
     def save_now(self) -> dict:
-        """Request an immediate save."""
-        commands = self._training_commands
+        with self._status_lock:
+            commands = self._training_commands
         if commands is None:
             return {"ok": False, "error": "Training is not running"}
         with suppress(Exception):
             commands.save()
         return {"ok": True}
-
-    # ------------------------------------------------------------------
-    # Callback handlers (invoked by the trainer on its thread)
-    # ------------------------------------------------------------------
 
     def _on_update_train_progress(self, train_progress: Any, max_step: int, max_epoch: int) -> None:
         self._broadcast({
@@ -361,7 +243,7 @@ class TrainerService(SingletonMixin):
 
     def _on_sample_default(self, sampler_output: Any) -> None:
         with suppress(Exception):
-            payload = _serialize_sample(sampler_output)
+            payload = serialize_sample(sampler_output)
             self._broadcast({"type": "sample", "data": payload})
 
     def _on_update_sample_default_progress(self, step: int, max_step: int) -> None:
@@ -372,7 +254,7 @@ class TrainerService(SingletonMixin):
 
     def _on_sample_custom(self, sampler_output: Any) -> None:
         with suppress(Exception):
-            payload = _serialize_sample(sampler_output)
+            payload = serialize_sample(sampler_output)
             self._broadcast({"type": "sample", "data": payload})
 
     def _on_update_sample_custom_progress(self, step: int, max_step: int) -> None:
@@ -381,22 +263,14 @@ class TrainerService(SingletonMixin):
             "data": {"step": step, "max_step": max_step},
         })
 
-    # ------------------------------------------------------------------
-    # TensorBoard subprocess helpers
-    # ------------------------------------------------------------------
-    # These mirror the always-on TensorBoard management from TrainUI.
-    # A lightweight subprocess is spawned/killed as needed so that TB
-    # remains accessible between training runs when the user enables
-    # "Always-On TensorBoard".
-
-    _always_on_tensorboard_subprocess: Any = None  # subprocess.Popen | None
+    _always_on_tensorboard_subprocess: Any = None
 
     def _start_always_on_tensorboard(self) -> None:
         import os
         import subprocess
         import sys
 
-        self._stop_always_on_tensorboard()
+        self.stop_always_on_tensorboard()
 
         config = ConfigService.get_instance().config
 
@@ -419,7 +293,7 @@ class TrainerService(SingletonMixin):
         except Exception:
             self.__class__._always_on_tensorboard_subprocess = None
 
-    def _stop_always_on_tensorboard(self) -> None:
+    def stop_always_on_tensorboard(self) -> None:
         import subprocess
 
         proc = self.__class__._always_on_tensorboard_subprocess

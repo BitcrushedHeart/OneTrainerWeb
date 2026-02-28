@@ -1,18 +1,12 @@
-/**
- * Shared Tailwind class strings for form controls.
- *
- * Every input, select, and side-button in the shared component library
- * should reference these constants so that styling stays consistent and
- * changes only need to happen in one place.
- */
-
 /** Core input styling — no width class. */
 export const INPUT_BASE = [
-  "px-3 py-1.5 text-sm rounded-[6px]",
+  "px-3 py-1.5 text-sm leading-snug rounded-[6px]",
   "bg-[var(--color-input-bg)] text-[var(--color-on-surface)]",
   "border border-[var(--color-border-subtle)]",
+  "shadow-[inset_0_1px_2px_rgba(0,0,0,0.06)]",
+  "ring-0",
   "transition-[border-color,box-shadow,background-color] duration-200 ease-out",
-  "hover:border-[var(--color-on-surface-secondary)]",
+  "hover:border-[var(--color-on-surface-secondary)] hover:bg-[color-mix(in_srgb,var(--color-input-bg)_94%,var(--color-orchid-600)_6%)]",
   "focus:border-[var(--color-orchid-600)] focus:shadow-[var(--shadow-inset-focus)] focus:outline-none",
   "disabled:opacity-40 disabled:cursor-not-allowed",
 ].join(" ");
@@ -40,6 +34,22 @@ export const SIDE_BUTTON = [
   "transition-[border-color,color,background-color] duration-200 ease-out cursor-pointer",
   "disabled:opacity-40 disabled:cursor-not-allowed",
 ].join(" ");
+
+/** Core textarea styling — same as INPUT_BASE but no width class. */
+export const TEXTAREA_BASE = [
+  "px-3 py-2 text-sm leading-snug rounded-[6px]",
+  "bg-[var(--color-input-bg)] text-[var(--color-on-surface)]",
+  "border border-[var(--color-border-subtle)]",
+  "shadow-[inset_0_1px_2px_rgba(0,0,0,0.06)]",
+  "ring-0",
+  "transition-[border-color,box-shadow,background-color] duration-200 ease-out",
+  "hover:border-[var(--color-on-surface-secondary)] hover:bg-[color-mix(in_srgb,var(--color-input-bg)_94%,var(--color-orchid-600)_6%)]",
+  "focus:border-[var(--color-orchid-600)] focus:shadow-[var(--shadow-inset-focus)] focus:outline-none",
+  "disabled:opacity-40 disabled:cursor-not-allowed",
+].join(" ");
+
+/** Full-width textarea. */
+export const TEXTAREA_FULL = `w-full ${TEXTAREA_BASE}`;
 
 /** Placeholder text colour — append to input class strings when needed. */
 export const PLACEHOLDER = "placeholder:text-[var(--color-on-surface-secondary)]";

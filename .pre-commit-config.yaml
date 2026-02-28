@@ -14,12 +14,21 @@ repos:
     - id: check-yaml
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.14.14
+  rev: v0.15.1
   hooks:
     # Run the Ruff linter, but not the formatter.
     - id: ruff
       args: ["--fix"]
       types_or: [ python, pyi, jupyter ]
+
+- repo: local
+  hooks:
+    - id: eslint
+      name: ESLint (frontend)
+      entry: bash -c 'cd web/gui && npx eslint --max-warnings 0'
+      language: system
+      files: '^web/gui/.*\.(ts|tsx)$'
+      pass_filenames: false
 
 ci:
   autofix_prs: false

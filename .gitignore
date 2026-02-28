@@ -46,3 +46,7 @@ FeasibilityStudy.md
 .claude
 CLAUDE.md
 web/gui/brand.md
+web/gui/release/
+web/gui/node_modules/
+web/backend/__pycache__/
+web/backend/**/__pycache__/

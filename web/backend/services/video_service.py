@@ -1,15 +1,3 @@
-"""
-Singleton service that manages video tool operations.
-
-Provides three background operations mirroring the legacy ``VideoToolUI.py``:
-  - Extract clips from video files (with scene detection, FPS conversion, border removal)
-  - Extract images/frames from video files (with blur filtering)
-  - Download videos via yt-dlp
-
-All heavy dependencies (cv2, scenedetect, ffmpeg) are imported lazily so
-that the FastAPI server starts quickly even when they are not installed.
-"""
-
 import concurrent.futures
 import logging
 import math
@@ -19,34 +7,51 @@ import random
 import shlex
 import subprocess
 import threading
+from typing import Literal
 
 from web.backend.services._singleton import SingletonMixin
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Supported video extensions (mirrored from modules/util/path_util.py to
-# avoid importing the full modules package at module scope)
-# ---------------------------------------------------------------------------
+VideoStatus = Literal["idle", "running", "completed", "error"]
 
 SUPPORTED_VIDEO_EXTENSIONS = {".webm", ".mkv", ".flv", ".avi", ".mov", ".wmv", ".mp4", ".mpeg", ".m4v"}
 
+ALLOWED_YTDLP_FLAGS = {
+    "--quiet",
+    "-q",
+    "--no-warnings",
+    "--progress",
+    "--no-progress",
+    "--format",
+    "-f",
+    "--merge-output-format",
+    "--write-subs",
+    "--sub-lang",
+    "--sub-format",
+    "--embed-subs",
+    "--no-playlist",
+    "--playlist-items",
+    "--no-overwrites",
+    "--restrict-filenames",
+    "--trim-filenames",
+    "--recode-video",
+    "--remux-video",
+    "--write-thumbnail",
+    "--convert-thumbnails",
+}
+
 
 class VideoService(SingletonMixin):
-    """Thread-safe singleton for video tool operations."""
 
     def __init__(self) -> None:
-        self._status: str = "idle"  # "idle" | "running" | "completed" | "error"
+        self._status: VideoStatus = "idle"
         self._message: str | None = None
         self._error: str | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
-    # ------------------------------------------------------------------
-    # Status helpers
-    # ------------------------------------------------------------------
-
-    def _set_status(self, status: str, message: str | None = None, error: str | None = None) -> None:
+    def _set_status(self, status: VideoStatus, message: str | None = None, error: str | None = None) -> None:
         with self._lock:
             self._status = status
             self._message = message
@@ -59,14 +64,6 @@ class VideoService(SingletonMixin):
                 "message": self._message,
                 "error": self._error,
             }
-
-    def _is_busy(self) -> bool:
-        with self._lock:
-            return self._status == "running"
-
-    # ------------------------------------------------------------------
-    # Lazy import helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _import_cv2():
@@ -90,12 +87,7 @@ class VideoService(SingletonMixin):
                 "Install it with:  pip install scenedetect[opencv]"
             ) from exc
 
-    # ------------------------------------------------------------------
-    # Common helpers (ported from VideoToolUI)
-    # ------------------------------------------------------------------
-
     def _get_vid_paths(self, batch_mode: bool, video_path: str, directory: str) -> list[pathlib.Path]:
-        """Return a list of valid video file paths."""
         cv2 = self._import_cv2()
         input_videos: list[pathlib.Path] = []
 
@@ -133,7 +125,6 @@ class VideoService(SingletonMixin):
 
     @staticmethod
     def _get_random_aspect(height: int, width: int, variation: float) -> tuple[int, int, int, int]:
-        """Return (y, h, x, w) for a random aspect-ratio crop."""
         if variation == 0:
             return 0, height, 0, width
 
@@ -164,7 +155,6 @@ class VideoService(SingletonMixin):
         return position_y, new_height, position_x, new_width
 
     def _find_main_contour(self, frame):
-        """Detect the main content bounding box (for border removal)."""
         cv2 = self._import_cv2()
         frame_grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         _, frame_thresh = cv2.threshold(frame_grayscale, 15, 255, cv2.THRESH_BINARY)
@@ -184,14 +174,9 @@ class VideoService(SingletonMixin):
 
     @staticmethod
     def _parse_timestamp_to_frames(timestamp: str, fps: float) -> int:
-        """Convert 'HH:MM:SS' or 'MM:SS' or 'SS' to a frame number."""
         parts = timestamp.split(":")
         seconds = sum(int(x) * 60 ** i for i, x in enumerate(reversed(parts)))
         return int(seconds * fps)
-
-    # ==================================================================
-    # EXTRACT CLIPS
-    # ==================================================================
 
     def extract_clips(
         self,
@@ -208,15 +193,8 @@ class VideoService(SingletonMixin):
         remove_borders: bool,
         crop_variation: float,
     ) -> dict:
-        """Validate inputs and run clip extraction in a background thread."""
-        if self._is_busy():
-            return {"ok": False, "error": "A video operation is already running"}
-
-        # Validate output directory
         if not output_dir or not pathlib.Path(output_dir).is_dir():
             return {"ok": False, "error": f"Invalid output directory: {output_dir}"}
-
-        # Validate numeric inputs
         if max_length <= 0.25:
             return {"ok": False, "error": "Max Length of clips must be > 0.25 seconds."}
         if fps < 0:
@@ -224,7 +202,12 @@ class VideoService(SingletonMixin):
         if not (0.0 <= crop_variation < 1.0):
             return {"ok": False, "error": "Crop Variation must be between 0.0 and 1.0."}
 
-        self._set_status("running", "Starting clip extraction...")
+        with self._lock:
+            if self._status == "running":
+                return {"ok": False, "error": "A video operation is already running"}
+            self._status = "running"
+            self._message = "Starting clip extraction..."
+            self._error = None
 
         def _run():
             try:
@@ -415,10 +398,6 @@ class VideoService(SingletonMixin):
                 except OSError:
                     logger.warning("Failed to remove placeholder %s", output_name + output_ext)
 
-    # ==================================================================
-    # EXTRACT IMAGES
-    # ==================================================================
-
     def extract_images(
         self,
         video_path: str,
@@ -433,13 +412,8 @@ class VideoService(SingletonMixin):
         remove_borders: bool,
         crop_variation: float,
     ) -> dict:
-        """Validate inputs and run image extraction in a background thread."""
-        if self._is_busy():
-            return {"ok": False, "error": "A video operation is already running"}
-
         if not output_dir or not pathlib.Path(output_dir).is_dir():
             return {"ok": False, "error": f"Invalid output directory: {output_dir}"}
-
         if images_per_second <= 0:
             return {"ok": False, "error": "Images/sec must be > 0."}
         if not (0.0 <= blur_removal < 1.0):
@@ -447,7 +421,12 @@ class VideoService(SingletonMixin):
         if not (0.0 <= crop_variation < 1.0):
             return {"ok": False, "error": "Crop Variation must be between 0.0 and 1.0."}
 
-        self._set_status("running", "Starting image extraction...")
+        with self._lock:
+            if self._status == "running":
+                return {"ok": False, "error": "A video operation is already running"}
+            self._status = "running"
+            self._message = "Starting image extraction..."
+            self._error = None
 
         def _run():
             try:
@@ -571,10 +550,6 @@ class VideoService(SingletonMixin):
                 cv2.imwrite(filename, frame_cropped[y2:y2 + h2, x2:x2 + w2])
         video.release()
 
-    # ==================================================================
-    # DOWNLOAD VIDEOS
-    # ==================================================================
-
     def download_videos(
         self,
         url: str,
@@ -583,12 +558,14 @@ class VideoService(SingletonMixin):
         output_dir: str,
         additional_args: str,
     ) -> dict:
-        """Validate inputs and run yt-dlp download in a background thread."""
-        if self._is_busy():
-            return {"ok": False, "error": "A video operation is already running"}
-
         if not output_dir or not pathlib.Path(output_dir).is_dir():
             return {"ok": False, "error": f"Invalid output directory: {output_dir}"}
+
+        if additional_args and additional_args.strip():
+            try:
+                self._validate_ytdlp_args(shlex.split(additional_args.strip()))
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
 
         if not batch_mode:
             if not url or not url.strip():
@@ -603,7 +580,12 @@ class VideoService(SingletonMixin):
             if not ydl_urls:
                 return {"ok": False, "error": "Link list file is empty."}
 
-        self._set_status("running", f"Downloading {len(ydl_urls)} video(s)...")
+        with self._lock:
+            if self._status == "running":
+                return {"ok": False, "error": "A video operation is already running"}
+            self._status = "running"
+            self._message = f"Downloading {len(ydl_urls)} video(s)..."
+            self._error = None
 
         def _run():
             try:
@@ -624,6 +606,21 @@ class VideoService(SingletonMixin):
         return {"ok": True, "message": f"Downloading {len(ydl_urls)} video(s)..."}
 
     @staticmethod
+    def _validate_ytdlp_args(args_list: list[str]) -> list[str]:
+        rejected: list[str] = []
+        for arg in args_list:
+            # Normalise: strip the value part from "--flag=value" forms
+            flag = arg.split("=", 1)[0] if arg.startswith("-") else arg
+            if flag.startswith("-") and flag not in ALLOWED_YTDLP_FLAGS:
+                rejected.append(flag)
+        if rejected:
+            raise ValueError(
+                f"yt-dlp flag(s) not allowed: {', '.join(rejected)}. "
+                f"Only the following flags are permitted: {', '.join(sorted(ALLOWED_YTDLP_FLAGS))}"
+            )
+        return args_list
+
+    @staticmethod
     def _download_single(url: str, output_dir: str, additional_args: str) -> None:
         url = (url or "").strip()
         if not url:
@@ -631,8 +628,21 @@ class VideoService(SingletonMixin):
             return
 
         args_list = shlex.split(additional_args.strip()) if additional_args and additional_args.strip() else []
-        cmd = ["yt-dlp", "-o", "%(title)s.%(ext)s", "-P", output_dir] + args_list + [url]
+
+        try:
+            VideoService._validate_ytdlp_args(args_list)
+        except ValueError as exc:
+            logger.error("Blocked yt-dlp arguments: %s", exc)
+            return
+
+        cmd = ["yt-dlp", "--ignore-config", "-o", "%(title)s.%(ext)s", "-P", output_dir] + args_list + [url]
 
         logger.info("Downloading %s...", url)
-        subprocess.run(cmd)
+        # SECURITY INVARIANT: cmd is a list, NOT a string.  subprocess.run()
+        # with a list does NOT use a shell, so value tokens cannot contain
+        # shell metacharacters that would be interpreted.  Do not change to
+        # shell=True without a thorough security review.
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            logger.warning("yt-dlp exited %d for %s: %s", proc.returncode, url, proc.stderr[:500])
         logger.info("Download %s done!", url)

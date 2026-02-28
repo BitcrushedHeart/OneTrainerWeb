@@ -1,8 +1,8 @@
 import re
 import time
-import urllib.request
 import urllib.error
-from typing import Optional
+import urllib.request
+from collections import OrderedDict
 
 from fastapi import APIRouter
 from fastapi.responses import Response
@@ -101,17 +101,14 @@ _CACHE_TTL = 3600  # 1 hour in seconds
 _RAW_WIKI_BASE = "https://raw.githubusercontent.com/wiki/Nerogar/OneTrainer"
 
 
-def _fetch_wiki_page(slug: str) -> Optional[str]:
-    """Fetch a wiki page from GitHub. Returns markdown content or None on failure."""
+def _fetch_wiki_page(slug: str) -> str | None:
     now = time.time()
 
-    # Check cache first
     if slug in _cache:
         content, cached_at = _cache[slug]
         if now - cached_at < _CACHE_TTL:
             return content
 
-    # Fetch from GitHub
     url = f"{_RAW_WIKI_BASE}/{slug}.md"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OneTrainerWeb/1.0"})
@@ -127,8 +124,6 @@ def _fetch_wiki_page(slug: str) -> Optional[str]:
 
 
 def _rewrite_image_urls(content: str) -> str:
-    """Rewrite image URLs in markdown/HTML to go through the local image proxy."""
-    # Rewrite markdown images: ![alt](url)
     def _rewrite_md_img(m: re.Match) -> str:
         alt, url = m.group(1), m.group(2)
         if url.startswith(("http://", "https://")):
@@ -138,7 +133,6 @@ def _rewrite_image_urls(content: str) -> str:
 
     content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", _rewrite_md_img, content)
 
-    # Rewrite HTML <img src="url"> tags
     def _rewrite_html_img(m: re.Match) -> str:
         url = m.group(1)
         if url.startswith(("http://", "https://")):
@@ -152,34 +146,66 @@ def _rewrite_image_urls(content: str) -> str:
 
 
 # In-memory image cache: url -> (content_type, bytes, timestamp)
-_image_cache: dict[str, tuple[str, bytes, float]] = {}
+# Bounded to prevent unbounded memory growth.
+
+_MAX_IMAGE_CACHE = 100
+_MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+_image_cache: OrderedDict[str, tuple[str, bytes, float]] = OrderedDict()
 _IMAGE_CACHE_TTL = 3600  # 1 hour
+
+_ALLOWED_IMAGE_PREFIXES = (
+    "https://github.com/",
+    "https://raw.githubusercontent.com/",
+    "https://user-images.githubusercontent.com/",
+)
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith(_ALLOWED_IMAGE_PREFIXES):
+            raise urllib.error.URLError(f"Redirect to disallowed domain: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_SafeRedirectHandler)
 
 
 @router.get("/image")
 def proxy_wiki_image(url: str) -> Response:
-    """Proxy an external image to avoid CORS/hotlink issues."""
     now = time.time()
 
-    # Only allow proxying from GitHub domains
-    if not url.startswith(("https://github.com/", "https://raw.githubusercontent.com/", "https://user-images.githubusercontent.com/")):
+    if not url.startswith(_ALLOWED_IMAGE_PREFIXES):
         return Response(status_code=403, content="Forbidden: only GitHub image URLs are allowed")
 
-    # Check cache
     if url in _image_cache:
         content_type, data, cached_at = _image_cache[url]
         if now - cached_at < _IMAGE_CACHE_TTL:
+            _image_cache.move_to_end(url)
             return Response(content=data, media_type=content_type)
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "OneTrainerWeb/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = response.read()
+        with _opener.open(req, timeout=15) as response:
+            content_length = response.headers.get("Content-Length")
+            try:
+                content_length_int = int(content_length) if content_length is not None else None
+            except ValueError:
+                content_length_int = None
+            if content_length_int is not None and content_length_int > _MAX_IMAGE_SIZE:
+                return Response(status_code=413, content="Image too large (exceeds 10 MB limit)")
+
+            # Guard against missing/lying Content-Length
+            data = response.read(_MAX_IMAGE_SIZE + 1)
+            if len(data) > _MAX_IMAGE_SIZE:
+                return Response(status_code=413, content="Image too large (exceeds 10 MB limit)")
+
             content_type = response.headers.get("Content-Type", "image/png")
             _image_cache[url] = (content_type, data, now)
+            _image_cache.move_to_end(url)
+            while len(_image_cache) > _MAX_IMAGE_CACHE:
+                _image_cache.popitem(last=False)
             return Response(content=data, media_type=content_type)
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
-        # Return stale cache if available
         if url in _image_cache:
             content_type, data, _ = _image_cache[url]
             return Response(content=data, media_type=content_type)
@@ -188,14 +214,11 @@ def proxy_wiki_image(url: str) -> Response:
 
 @router.get("/pages")
 def list_wiki_pages() -> list[dict]:
-    """Return the organized list of wiki pages grouped by section."""
     return WIKI_SECTIONS
 
 
 @router.get("/pages/{slug:path}")
 def get_wiki_page(slug: str) -> dict[str, str]:
-    """Fetch and return the markdown content for a wiki page."""
-    # Allow any slug — try to fetch it even if not in our list
     content = _fetch_wiki_page(slug)
     if content is None:
         content = (
@@ -205,7 +228,6 @@ def get_wiki_page(slug: str) -> dict[str, str]:
             f"[GitHub Wiki](https://github.com/Nerogar/OneTrainer/wiki/{slug})."
         )
 
-    # Rewrite image URLs to go through the local proxy
     content = _rewrite_image_urls(content)
 
     return {"slug": slug, "content": content}

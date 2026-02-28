@@ -2,7 +2,6 @@ export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "theme";
 
-/** Get stored theme or detect system preference */
 export function getInitialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
@@ -12,7 +11,6 @@ export function getInitialTheme(): Theme {
     : "light";
 }
 
-/** Apply theme to document body and persist choice */
 export function applyTheme(theme: Theme): void {
   document.body.setAttribute("data-theme", theme);
   localStorage.setItem(STORAGE_KEY, theme);

@@ -1,8 +1,9 @@
+import os
 import sys
+from contextlib import asynccontextmanager
 
 from web.backend.paths import PROJECT_ROOT
 
-# Add project root to path so modules/ is directly importable
 sys.path.insert(0, PROJECT_ROOT)
 
 from web.backend.routers import (
@@ -21,26 +22,40 @@ from web.backend.routers import (
     video_tools,
     wiki,
 )
-from web.backend.ws import system_ws, training_ws
+from web.backend.ws import system_ws, terminal_ws, training_ws
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from web.backend.services.log_service import LogService
+
+    LogService.get_instance().install()
+    yield
+
+
 app = FastAPI(
     title="OneTrainerWeb API",
     version="0.1.0",
+    lifespan=lifespan,
 )
+
+# CORS: covers Vite dev, backend self-origin, and Electron's file:// (sends null Origin).
+# Override with OT_CORS_ORIGINS (comma-separated).
+_default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "null",
+]
+_cors_origins = os.environ.get("OT_CORS_ORIGINS", "").split(",") if os.environ.get("OT_CORS_ORIGINS") else _default_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        # Electron production loads from file:// which sends Origin: null
-        "null",
-    ],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -64,6 +79,6 @@ _routers = [
 for _router in _routers:
     app.include_router(_router, prefix="/api")
 
-# WebSocket routes (no /api prefix — WebSocket paths are at root)
 app.include_router(training_ws.router)
 app.include_router(system_ws.router)
+app.include_router(terminal_ws.router)

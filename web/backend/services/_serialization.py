@@ -1,22 +1,9 @@
-"""
-Shared serialisation helpers used by both ``sampler_service`` and
-``trainer_service``.
-"""
-
 import base64
 import io
 from typing import Any
 
 
 def serialize_sample(sampler_output: Any) -> dict:
-    """
-    Convert a ``ModelSamplerOutput`` into a JSON-friendly dict with base64-
-    encoded payload.
-
-    Handles three file types (IMAGE, VIDEO, AUDIO).  ``FileType`` and
-    ``ModelSamplerOutput`` are imported at call time to avoid pulling in
-    torch/PIL at module scope.
-    """
     from modules.util.enum.FileType import FileType
 
     file_type: FileType = sampler_output.file_type

@@ -14,7 +14,7 @@ export interface ToggleProps {
 
 export function Toggle({ label, labelPosition = "right", configPath, value, onChange, disabled, tooltip }: ToggleProps) {
   const resolvedTooltip = tooltip ?? (configPath ? getTooltip(configPath) : undefined);
-  const [configValue, setConfigValue] = useConfigField<boolean>(configPath ?? "__unused__");
+  const [configValue, setConfigValue] = useConfigField<boolean>(configPath);
   const checked = configPath ? (configValue ?? false) : (value ?? false);
   const handleChange = () => {
     const next = !checked;
@@ -28,13 +28,17 @@ export function Toggle({ label, labelPosition = "right", configPath, value, onCh
       aria-checked={checked}
       disabled={disabled}
       onClick={handleChange}
-      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ease-out cursor-pointer
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-[background,box-shadow,transform] duration-200 ease-out cursor-pointer hover:scale-105
         disabled:opacity-40 disabled:cursor-not-allowed
-        ${checked ? "bg-[var(--color-orchid-600)]" : "bg-[var(--color-border-subtle)]"}`}
+        ${checked ? "" : "bg-[var(--color-border-subtle)]"}`}
+      style={{
+        background: checked ? "linear-gradient(135deg, var(--color-orchid-600), var(--color-violet-500))" : undefined,
+        boxShadow: checked ? "0 0 8px var(--color-orchid-600-alpha-25)" : "inset 0 1px 3px rgba(0,0,0,0.15)",
+      }}
     >
       <span
-        className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform duration-200 ease-out
-          ${checked ? "translate-x-[18px]" : "translate-x-[3px]"}`}
+        className={`inline-block h-4 w-4 rounded-full bg-white transition-transform duration-200 ease-out
+          ${checked ? "translate-x-[17px]" : "translate-x-[3px]"}`}
         style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }}
       />
     </button>

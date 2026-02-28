@@ -1,33 +1,19 @@
-"""
-REST endpoints for reading TensorBoard event data.
-
-Provides endpoints to list runs, enumerate scalar tags, and fetch
-scalar data points (with optional incremental reads via after_step).
-"""
-
-from fastapi import APIRouter, HTTPException, Query
-
 from web.backend.services.config_service import ConfigService
 from web.backend.services.tensorboard_service import TensorboardService
+
+from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/tensorboard", tags=["tensorboard"])
 
 
 @router.get("/runs")
 def list_runs() -> list[str]:
-    """
-    List available training runs (subdirectories) under the configured
-    TensorBoard log directory.
-    """
     service = TensorboardService.get_instance()
     return service.list_runs()
 
 
 @router.get("/scalars")
 def list_tags(run: str = Query(..., description="Run name")) -> list[str]:
-    """
-    List all scalar tags found in a specific training run.
-    """
     service = TensorboardService.get_instance()
     tags = service.list_tags(run)
     if not tags and not _run_exists(run):
@@ -41,12 +27,6 @@ def get_scalars(
     run: str = Query(..., description="Run name"),
     after_step: int = Query(0, description="Only return data after this step (for incremental updates)"),
 ) -> list[dict]:
-    """
-    Return scalar data points for a specific tag within a run.
-
-    Each entry contains ``wall_time``, ``step``, and ``value``.
-    Use ``after_step`` to fetch only new points since the last poll.
-    """
     service = TensorboardService.get_instance()
 
     if not _run_exists(run):
@@ -57,9 +37,6 @@ def get_scalars(
 
 @router.get("/config")
 def get_tensorboard_config() -> dict:
-    """
-    Return the resolved TensorBoard log directory from the current config.
-    """
     config_service = ConfigService.get_instance()
     workspace_dir = config_service.config.workspace_dir or "workspace"
 
@@ -73,7 +50,6 @@ def get_tensorboard_config() -> dict:
 
 
 def _run_exists(run_name: str) -> bool:
-    """Check whether the named run exists as a subdirectory."""
     service = TensorboardService.get_instance()
     runs = service.list_runs()
     return run_name in runs

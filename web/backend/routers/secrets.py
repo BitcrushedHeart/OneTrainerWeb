@@ -1,10 +1,10 @@
 import json
 import os
 
-from fastapi import APIRouter, HTTPException
-
 from web.backend.paths import SECRETS_PATH
 from web.backend.services.config_service import ConfigService
+
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/secrets", tags=["secrets"])
 
@@ -13,20 +13,15 @@ _SENSITIVE_FIELDS = {"huggingface_token", "api_key", "password"}
 
 
 def _mask_value(value: str) -> str:
-    """Replace all but the last 4 characters with asterisks."""
     if not value or len(value) <= 4:
         return "****" if value else ""
     return "*" * (len(value) - 4) + value[-4:]
 
 
 def _mask_secrets(data: dict) -> dict:
-    """
-    Recursively mask sensitive string values in a secrets dictionary.
-    """
     masked = {}
     for key, value in data.items():
         if key.startswith("__"):
-            # Skip internal keys like __version
             continue
         if isinstance(value, dict):
             masked[key] = _mask_secrets(value)
@@ -39,12 +34,7 @@ def _mask_secrets(data: dict) -> dict:
 
 @router.get("")
 def get_secrets() -> dict:
-    """
-    Load secrets from secrets.json. Sensitive values are masked in the
-    response (only the last 4 characters are visible).
-    """
     if not os.path.isfile(SECRETS_PATH):
-        # Return the default structure with empty values
         service = ConfigService.get_instance()
         raw = service.config.secrets.to_dict()
         return _mask_secrets(raw)
@@ -60,13 +50,6 @@ def get_secrets() -> dict:
 
 @router.put("")
 def save_secrets(body: dict) -> dict:
-    """
-    Save secrets to secrets.json. Accepts a full secrets dictionary.
-    Fields whose values are entirely asterisks (masked placeholders)
-    are preserved from the existing file to avoid overwriting real
-    values with masks.
-    """
-    # Load existing secrets so masked fields can be preserved
     existing: dict = {}
     if os.path.isfile(SECRETS_PATH):
         try:
@@ -77,7 +60,6 @@ def save_secrets(body: dict) -> dict:
 
     merged = _merge_secrets(body, existing)
 
-    # Also apply to the in-memory config
     service = ConfigService.get_instance()
     service.config.secrets.from_dict(merged)
 
@@ -92,11 +74,6 @@ def save_secrets(body: dict) -> dict:
 
 
 def _merge_secrets(incoming: dict, existing: dict) -> dict:
-    """
-    Merge incoming secrets with existing ones, preserving existing
-    values when the incoming value looks like a mask (all asterisks
-    or the well-known '****' placeholder).
-    """
     merged = {}
     for key, value in incoming.items():
         if isinstance(value, dict) and isinstance(existing.get(key), dict):
@@ -113,15 +90,9 @@ def _merge_secrets(incoming: dict, existing: dict) -> dict:
 
 
 def _is_masked(value: str) -> bool:
-    """Return True if the value looks like a masked placeholder."""
     if not value:
         return False
-    # Consider it masked if it's all asterisks or matches our mask pattern
-    # (asterisks followed by up to 4 non-asterisk chars)
     stripped = value.rstrip()
     if all(c == "*" for c in stripped):
         return True
-    # Pattern: ****<suffix up to 4 chars> -- still treat as mask
-    if stripped.startswith("****") and len(stripped) - stripped.count("*") <= 4:
-        return True
-    return False
+    return stripped.startswith("****") and len(stripped) - stripped.count("*") <= 4

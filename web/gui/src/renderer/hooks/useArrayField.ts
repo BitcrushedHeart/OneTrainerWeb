@@ -1,12 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useConfigField } from "./useConfigField";
 
 interface UseArrayFieldOptions<T> {
-  /** Dot-notation path to the array field in TrainConfig. */
   path: string;
-  /** Factory function that creates a new default item. */
   createDefault: () => T;
-  /** Optional: transform a cloned item (e.g. randomize seed/uuid). */
   prepareClone?: (item: T) => T;
 }
 
@@ -19,7 +16,7 @@ interface UseArrayFieldReturn<T> {
 
 export function useArrayField<T>({ path, createDefault, prepareClone }: UseArrayFieldOptions<T>): UseArrayFieldReturn<T> {
   const [value, setValue] = useConfigField<T[]>(path);
-  const items = value ?? [];
+  const items = useMemo(() => value ?? [], [value]);
 
   const add = useCallback(() => {
     setValue([...items, createDefault()]);

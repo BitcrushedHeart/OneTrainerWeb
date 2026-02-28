@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ModalBase } from "./ModalBase";
 import { FormEntry, Select, Toggle, Button } from "@/components/shared";
+import { TEXTAREA_FULL } from "@/utils/inputStyles";
 import { NoiseSchedulerValues } from "@/types/generated/enums";
 import { trainingApi } from "@/api/trainingApi";
+import { useTrainingStore } from "@/store/trainingStore";
 
 export interface ManualSamplingModalProps {
   open: boolean;
@@ -36,7 +38,16 @@ const DEFAULT_SAMPLE: ManualSampleState = {
 export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps) {
   const [sample, setSample] = useState<ManualSampleState>({ ...DEFAULT_SAMPLE });
   const [isSampling, setIsSampling] = useState(false);
-  const [sampleImage] = useState<string | null>(null);
+  const [sampleImage, setSampleImage] = useState<string | null>(null);
+  const waitingRef = useRef(false);
+  const latestSample = useTrainingStore((s) => s.latestSample);
+
+  useEffect(() => {
+    if (waitingRef.current && latestSample) {
+      setSampleImage(latestSample);
+      waitingRef.current = false;
+    }
+  }, [latestSample]);
 
   const update = <K extends keyof ManualSampleState>(field: K, value: ManualSampleState[K]) => {
     setSample((prev) => ({ ...prev, [field]: value }));
@@ -44,6 +55,7 @@ export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps)
 
   const handleSample = async () => {
     setIsSampling(true);
+    waitingRef.current = true;
     try {
       await trainingApi.sampleCustom({
         prompt: sample.prompt,
@@ -56,7 +68,7 @@ export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps)
         cfg_scale: sample.cfg_scale,
       });
     } catch {
-      // Sampling error — sample will not appear but training continues
+      waitingRef.current = false;
     } finally {
       setIsSampling(false);
     }
@@ -72,7 +84,7 @@ export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps)
               value={sample.prompt}
               onChange={(e) => update("prompt", e.target.value)}
               rows={3}
-              className="px-3 py-2 rounded-[var(--radius-sm)] text-sm bg-[var(--color-surface-raised)] border border-[var(--color-border-subtle)] text-[var(--color-on-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-orchid-600)] resize-y"
+              className={`${TEXTAREA_FULL} resize-y`}
               placeholder="Enter prompt..."
             />
           </div>
@@ -83,7 +95,7 @@ export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps)
               value={sample.negative_prompt}
               onChange={(e) => update("negative_prompt", e.target.value)}
               rows={2}
-              className="px-3 py-2 rounded-[var(--radius-sm)] text-sm bg-[var(--color-surface-raised)] border border-[var(--color-border-subtle)] text-[var(--color-on-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-orchid-600)] resize-y"
+              className={`${TEXTAREA_FULL} resize-y`}
               placeholder="Enter negative prompt..."
             />
           </div>
@@ -116,12 +128,9 @@ export function ManualSamplingModal({ open, onClose }: ManualSamplingModalProps)
         <Button variant="primary" onClick={handleSample} disabled={isSampling}>
           {isSampling ? "Sampling..." : "Sample"}
         </Button>
-        <button
-          onClick={onClose}
-          className="px-4 py-2 rounded-[var(--radius-sm)] text-sm font-medium bg-transparent border border-[var(--color-border-subtle)] text-[var(--color-on-surface)] hover:border-[var(--color-orchid-600)] transition-colors duration-200 cursor-pointer"
-        >
+        <Button variant="secondary" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
     </ModalBase>
   );

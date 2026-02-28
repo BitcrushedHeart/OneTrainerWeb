@@ -1,15 +1,4 @@
-/**
- * Reusable SVG scalar chart component for step-based data.
- *
- * Used by TensorboardPage and RunPage. PerformancePage uses its own
- * time-series MetricChart that shares only the utility functions.
- */
-
 import { generateTicks, formatValue, formatStep } from "@/utils/chartUtils";
-
-// ---------------------------------------------------------------------------
-// Constants (match the original inline values)
-// ---------------------------------------------------------------------------
 
 const DEFAULT_WIDTH = 520;
 const DEFAULT_HEIGHT = 260;
@@ -20,10 +9,6 @@ const GRID_COLOR = "var(--color-border-subtle)";
 const TEXT_COLOR = "var(--color-on-surface-secondary)";
 const AXIS_COLOR = "var(--color-on-surface-secondary)";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface ScalarChartProps {
   tag: string;
   points: Array<{ step: number; value: number }>;
@@ -31,10 +16,6 @@ export interface ScalarChartProps {
   width?: number;
   height?: number;
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function ScalarChart({
   tag,
@@ -52,7 +33,7 @@ export function ScalarChart({
         <h4
           style={{
             margin: "0 0 8px 0",
-            fontSize: "0.8125rem",
+            fontSize: "var(--text-caption)",
             fontWeight: 600,
             color: "var(--color-on-surface)",
           }}
@@ -66,7 +47,7 @@ export function ScalarChart({
             alignItems: "center",
             justifyContent: "center",
             color: "var(--color-on-surface-secondary)",
-            fontSize: "0.8125rem",
+            fontSize: "var(--text-caption)",
           }}
         >
           No data yet
@@ -133,7 +114,7 @@ export function ScalarChart({
         <h4
           style={{
             margin: 0,
-            fontSize: "0.8125rem",
+            fontSize: "var(--text-caption)",
             fontWeight: 600,
             color: "var(--color-on-surface)",
           }}
@@ -156,7 +137,6 @@ export function ScalarChart({
         width="100%"
         style={{ display: "block" }}
       >
-        {/* Grid lines */}
         {yTicks.map((tick) => {
           const y = yScale(tick);
           return (
@@ -173,7 +153,6 @@ export function ScalarChart({
           );
         })}
 
-        {/* Area fill with gradient */}
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={lineColor} stopOpacity="0.2" />
@@ -182,7 +161,6 @@ export function ScalarChart({
         </defs>
         <path d={areaPath} fill={`url(#${gradientId})`} />
 
-        {/* Data line */}
         <path
           d={linePath}
           fill="none"
@@ -192,7 +170,6 @@ export function ScalarChart({
           strokeLinecap="round"
         />
 
-        {/* X-axis labels */}
         {xTicks.map((tick) => {
           const x = xScale(tick);
           if (x < CHART_PADDING.left || x > width - CHART_PADDING.right) return null;
@@ -211,7 +188,6 @@ export function ScalarChart({
           );
         })}
 
-        {/* Y-axis labels */}
         {yTicks.map((tick) => {
           const y = yScale(tick);
           if (y < CHART_PADDING.top || y > CHART_PADDING.top + plotH) return null;
@@ -230,7 +206,6 @@ export function ScalarChart({
           );
         })}
 
-        {/* X-axis label */}
         <text
           x={CHART_PADDING.left + plotW / 2}
           y={height - 0}
@@ -242,7 +217,6 @@ export function ScalarChart({
           step
         </text>
 
-        {/* Axes */}
         <line
           x1={CHART_PADDING.left}
           y1={CHART_PADDING.top}
@@ -262,7 +236,6 @@ export function ScalarChart({
           opacity="0.5"
         />
 
-        {/* Data point count */}
         <text
           x={width - CHART_PADDING.right}
           y={CHART_PADDING.top - 8}

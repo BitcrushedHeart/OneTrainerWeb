@@ -1,0 +1,8 @@
+# Test dependencies
+# Install: pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+httpx>=0.28.0
+pytest>=8.0.0
+pytest-asyncio>=0.25.0

@@ -1,4 +1,3 @@
-/** A single form field definition used by schema-driven rendering. */
 export interface FieldDef {
   /** Dot-notation path into TrainConfig (doubles as React key). */
   key: string;
@@ -27,7 +26,6 @@ export interface FieldDef {
   unitPath?: string;
 }
 
-/** A titled group of fields rendered together as a card section. */
 export interface SectionDef {
   id: string;
   label: string;

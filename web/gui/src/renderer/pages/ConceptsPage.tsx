@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { ConceptGrid } from "@/components/concepts/ConceptGrid";
 import { ConceptEditorModal } from "@/components/modals/ConceptEditorModal";
 import { useConfigField } from "@/hooks/useConfigField";
@@ -65,7 +65,7 @@ export default function ConceptsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
-  const list = concepts ?? [];
+  const list = useMemo(() => concepts ?? [], [concepts]);
 
   const handleAdd = useCallback(() => {
     const next = [...list, { ...JSON.parse(JSON.stringify(DEFAULT_CONCEPT)), seed: Math.floor(Math.random() * 2 ** 30) }];

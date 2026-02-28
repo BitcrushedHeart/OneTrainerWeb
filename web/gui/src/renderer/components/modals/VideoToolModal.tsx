@@ -11,20 +11,12 @@ export interface VideoToolModalProps {
 
 type TabId = "clips" | "images" | "download";
 
-// ---------------------------------------------------------------------------
-// Tab button styling
-// ---------------------------------------------------------------------------
-
 const TAB_BASE =
   "px-4 py-2 text-sm font-medium rounded-t-[var(--radius-sm)] border border-b-0 transition-colors duration-200 cursor-pointer";
 const TAB_ACTIVE =
   "bg-[var(--color-surface)] text-[var(--color-on-surface)] border-[var(--color-border-subtle)]";
 const TAB_INACTIVE =
   "bg-transparent text-[var(--color-on-surface-secondary)] border-transparent hover:text-[var(--color-on-surface)] hover:border-[var(--color-border-subtle)]";
-
-// ---------------------------------------------------------------------------
-// Status bar component
-// ---------------------------------------------------------------------------
 
 function StatusBar({ status }: { status: VideoToolStatusResponse | null }) {
   if (!status || status.status === "idle") return null;
@@ -33,7 +25,7 @@ function StatusBar({ status }: { status: VideoToolStatusResponse | null }) {
     status.status === "error"
       ? "text-[var(--color-error-500)]"
       : status.status === "completed"
-        ? "text-green-400"
+        ? "text-[var(--color-success-500)]"
         : "text-[var(--color-orchid-600)]";
 
   return (
@@ -58,10 +50,6 @@ function StatusBar({ status }: { status: VideoToolStatusResponse | null }) {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Extract Clips tab
-// ---------------------------------------------------------------------------
 
 function ExtractClipsTab({
   onStatusChange,
@@ -113,7 +101,6 @@ function ExtractClipsTab({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Single Video */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <FilePicker
@@ -129,7 +116,6 @@ function ExtractClipsTab({
         </Button>
       </div>
 
-      {/* Time Range */}
       <FormFieldWrapper label="Time Range" tooltip="Time range to limit selection for single video. Format: HH:MM:SS, MM:SS, or seconds.">
         <div className="flex gap-2">
           <input
@@ -149,7 +135,6 @@ function ExtractClipsTab({
         </div>
       </FormFieldWrapper>
 
-      {/* Directory */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <DirPicker
@@ -164,7 +149,6 @@ function ExtractClipsTab({
         </Button>
       </div>
 
-      {/* Output */}
       <DirPicker
         label="Output"
         value={outputDir}
@@ -172,7 +156,6 @@ function ExtractClipsTab({
         tooltip="Path to folder where extracted clips will be saved."
       />
 
-      {/* Toggles and numeric fields */}
       <div className="grid grid-cols-2 gap-4">
         <Toggle
           label="Output to Subdirectories"
@@ -226,10 +209,6 @@ function ExtractClipsTab({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Extract Images tab
-// ---------------------------------------------------------------------------
-
 function ExtractImagesTab({
   onStatusChange,
 }: {
@@ -278,7 +257,6 @@ function ExtractImagesTab({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Single Video */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <FilePicker
@@ -294,7 +272,6 @@ function ExtractImagesTab({
         </Button>
       </div>
 
-      {/* Time Range */}
       <FormFieldWrapper label="Time Range" tooltip="Time range to limit selection for single video. Format: HH:MM:SS, MM:SS, or seconds.">
         <div className="flex gap-2">
           <input
@@ -314,7 +291,6 @@ function ExtractImagesTab({
         </div>
       </FormFieldWrapper>
 
-      {/* Directory */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <DirPicker
@@ -329,7 +305,6 @@ function ExtractImagesTab({
         </Button>
       </div>
 
-      {/* Output */}
       <DirPicker
         label="Output"
         value={outputDir}
@@ -337,7 +312,6 @@ function ExtractImagesTab({
         tooltip="Path to folder where extracted images will be saved."
       />
 
-      {/* Toggles and numeric fields */}
       <Toggle
         label="Output to Subdirectories"
         value={outputSubdirectories}
@@ -383,10 +357,6 @@ function ExtractImagesTab({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Download tab
-// ---------------------------------------------------------------------------
-
 function DownloadTab({
   onStatusChange,
 }: {
@@ -423,7 +393,6 @@ function DownloadTab({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Single Link */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <FormEntry
@@ -440,7 +409,6 @@ function DownloadTab({
         </Button>
       </div>
 
-      {/* Link List */}
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <FilePicker
@@ -456,7 +424,6 @@ function DownloadTab({
         </Button>
       </div>
 
-      {/* Output */}
       <DirPicker
         label="Output"
         value={outputDir}
@@ -464,7 +431,6 @@ function DownloadTab({
         tooltip="Path to folder where downloaded videos will be saved."
       />
 
-      {/* Additional Args */}
       <FormFieldWrapper label="Additional Args" tooltip="Any additional arguments to pass to yt-dlp, for example '--restrict-filenames --force-overwrite'. Default args will hide most terminal outputs.">
         <textarea
           value={additionalArgs}
@@ -474,7 +440,6 @@ function DownloadTab({
         />
       </FormFieldWrapper>
 
-      {/* yt-dlp info button */}
       <div>
         <Button
           variant="ghost"
@@ -489,10 +454,6 @@ function DownloadTab({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main modal
-// ---------------------------------------------------------------------------
 
 export function VideoToolModal({ open, onClose }: VideoToolModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>("clips");
@@ -525,7 +486,6 @@ export function VideoToolModal({ open, onClose }: VideoToolModalProps) {
 
   return (
     <ModalBase open={open} onClose={onClose} title="Video Tools" size="lg">
-      {/* Tab bar */}
       <div className="flex gap-1 mb-4 border-b border-[var(--color-border-subtle)]">
         {tabs.map((tab) => (
           <button
@@ -538,15 +498,12 @@ export function VideoToolModal({ open, onClose }: VideoToolModalProps) {
         ))}
       </div>
 
-      {/* Tab content */}
       {activeTab === "clips" && <ExtractClipsTab onStatusChange={fetchStatus} />}
       {activeTab === "images" && <ExtractImagesTab onStatusChange={fetchStatus} />}
       {activeTab === "download" && <DownloadTab onStatusChange={fetchStatus} />}
 
-      {/* Status bar */}
       <StatusBar status={status} />
 
-      {/* Close button */}
       <div className="flex justify-end mt-6 pt-4 border-t border-[var(--color-border-subtle)]">
         <Button variant="secondary" onClick={onClose}>
           Close

@@ -1,21 +1,9 @@
-"""
-REST endpoints for video tools (extract clips, extract images, download).
-
-All heavy lifting is delegated to ``VideoService``; these endpoints
-are thin wrappers that translate HTTP requests into service method calls.
-"""
-
 from web.backend.services.video_service import VideoService
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/tools/video", tags=["tools"])
-
-
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
 
 
 class ExtractClipsRequest(BaseModel):
@@ -67,14 +55,8 @@ class VideoToolStatusResponse(BaseModel):
     error: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.post("/extract-clips", response_model=VideoToolResponse)
 def extract_clips(req: ExtractClipsRequest):
-    """Run clip extraction in a background thread."""
     service = VideoService.get_instance()
     result = service.extract_clips(
         video_path=req.video_path,
@@ -95,7 +77,6 @@ def extract_clips(req: ExtractClipsRequest):
 
 @router.post("/extract-images", response_model=VideoToolResponse)
 def extract_images(req: ExtractImagesRequest):
-    """Run image extraction in a background thread."""
     service = VideoService.get_instance()
     result = service.extract_images(
         video_path=req.video_path,
@@ -115,7 +96,6 @@ def extract_images(req: ExtractImagesRequest):
 
 @router.post("/download", response_model=VideoToolResponse)
 def download_videos(req: DownloadRequest):
-    """Run yt-dlp download in a background thread."""
     service = VideoService.get_instance()
     result = service.download_videos(
         url=req.url,
@@ -129,7 +109,6 @@ def download_videos(req: DownloadRequest):
 
 @router.get("/status", response_model=VideoToolStatusResponse)
 def get_status():
-    """Return the current video tool operation status."""
     service = VideoService.get_instance()
     status = service.get_status()
     return VideoToolStatusResponse(**status)

@@ -1,10 +1,8 @@
 import { useUiStore, type TabId } from "@/store/uiStore";
 import { useConfigField } from "@/hooks/useConfigField";
 import type { TrainingMethod, ModelType } from "@/types/generated/enums";
+import { TRAINING_METHODS_BY_MODEL } from "@/types/generated/modelTypeInfo";
 import { useMemo, useCallback, useRef } from "react";
-
-/** Models that do not support additional embeddings. */
-const NO_ADDITIONAL_EMBEDDINGS: ModelType[] = ["FLUX_2", "QWEN", "Z_IMAGE"];
 
 interface TabDef {
   id: TabId;
@@ -27,7 +25,8 @@ const ALL_TABS: TabDef[] = [
   {
     id: "embeddings",
     label: "Additional Embeddings",
-    condition: (_m, model) => !NO_ADDITIONAL_EMBEDDINGS.includes(model as ModelType),
+    condition: (_m, model) =>
+      model != null && TRAINING_METHODS_BY_MODEL[model]?.includes("EMBEDDING"),
   },
   { id: "cloud", label: "Cloud" },
   { id: "performance", label: "Performance" },

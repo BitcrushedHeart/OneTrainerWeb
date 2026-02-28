@@ -1,14 +1,3 @@
-"""
-Preset loading and optimizer switching tests for OneTrainerWeb.
-
-Tests the full preset loading flow, optimizer switching mechanics,
-and config version migration system.
-
-Requires the full ML stack (PyTorch, diffusers, etc.) because
-optimizer_util imports torch transitively.  The entire module is
-skipped when the ML stack is unavailable.
-"""
-
 import json
 import os
 import sys
@@ -31,9 +20,7 @@ from modules.util.optimizer_util import (
     update_optimizer_config,
 )
 
-# ---------------------------------------------------------------------------
 # Discover presets
-# ---------------------------------------------------------------------------
 PRESETS_DIR = os.path.join(PROJECT_ROOT, "training_presets")
 PRESET_FILES = sorted(f for f in os.listdir(PRESETS_DIR) if f.endswith(".json"))
 
@@ -44,16 +31,11 @@ def _load_preset_json(filename: str) -> dict:
         return json.load(fh)
 
 
-# ===================================================================
 # 1. Preset loading -- no exceptions
-# ===================================================================
 
 class TestPresetLoad:
-    """Each preset should load cleanly into a default config."""
-
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_load_preset_no_exception(self, preset_filename: str):
-        """Loading a preset into default_values must not raise."""
         raw = _load_preset_json(preset_filename)
 
         if preset_filename.startswith("#"):
@@ -69,7 +51,6 @@ class TestPresetLoad:
 
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_load_preset_produces_valid_model_type(self, preset_filename: str):
-        """After loading a preset, model_type should be a valid ModelType enum."""
         from modules.util.enum.ModelType import ModelType
 
         raw = _load_preset_json(preset_filename)
@@ -82,7 +63,6 @@ class TestPresetLoad:
 
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_load_preset_produces_valid_training_method(self, preset_filename: str):
-        """After loading a preset, training_method should be a valid enum."""
         from modules.util.enum.TrainingMethod import TrainingMethod
 
         raw = _load_preset_json(preset_filename)
@@ -95,7 +75,6 @@ class TestPresetLoad:
 
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_load_preset_and_change_optimizer_no_exception(self, preset_filename: str):
-        """Loading a preset, then calling change_optimizer must not raise."""
         raw = _load_preset_json(preset_filename)
         if preset_filename.startswith("#"):
             raw["__version"] = TrainConfig.default_values().config_version
@@ -111,9 +90,7 @@ class TestPresetLoad:
         assert isinstance(d, dict)
 
 
-# ===================================================================
 # 2. Optimizer switching
-# ===================================================================
 
 # Common optimizers to test -- selected to cover different categories
 COMMON_OPTIMIZERS = [
@@ -130,18 +107,12 @@ COMMON_OPTIMIZERS = [
 
 
 class TestOptimizerSwitch:
-    """Test optimizer switching and default parameter application."""
-
     @pytest.mark.parametrize(
         "optimizer",
         COMMON_OPTIMIZERS,
         ids=[o.name for o in COMMON_OPTIMIZERS],
     )
     def test_change_optimizer_applies_defaults(self, optimizer: Optimizer):
-        """
-        change_optimizer should apply the optimizer's default params
-        without raising.
-        """
         config = TrainConfig.default_values()
         config.optimizer.optimizer = optimizer
 
@@ -155,9 +126,6 @@ class TestOptimizerSwitch:
         ids=[o.name for o in COMMON_OPTIMIZERS],
     )
     def test_change_optimizer_serializes(self, optimizer: Optimizer):
-        """
-        After changing optimizer, the config should serialise cleanly.
-        """
         config = TrainConfig.default_values()
         config.optimizer.optimizer = optimizer
 
@@ -173,23 +141,15 @@ class TestOptimizerSwitch:
     @pytest.mark.parametrize(
         "optimizer",
         list(OPTIMIZER_DEFAULT_PARAMETERS.keys()),
-        ids=[o.name for o in OPTIMIZER_DEFAULT_PARAMETERS.keys()],
+        ids=[o.name for o in OPTIMIZER_DEFAULT_PARAMETERS],
     )
     def test_all_optimizers_with_defaults(self, optimizer: Optimizer):
-        """
-        Every optimizer that has entries in OPTIMIZER_DEFAULT_PARAMETERS
-        should apply cleanly through change_optimizer.
-        """
         config = TrainConfig.default_values()
         config.optimizer.optimizer = optimizer
         result = change_optimizer(config)
         assert result.optimizer == optimizer
 
     def test_switch_and_switch_back_preserves_values(self):
-        """
-        Switching from optimizer A to B and back to A should restore A's
-        cached settings (the optimizer_defaults cache mechanism).
-        """
         config = TrainConfig.default_values()
 
         # Start with ADAMW
@@ -220,10 +180,6 @@ class TestOptimizerSwitch:
         )
 
     def test_switch_optimizer_without_prior_cache(self):
-        """
-        Switching to an optimizer that has no cached entry in
-        optimizer_defaults should just apply the built-in defaults.
-        """
         config = TrainConfig.default_values()
         config.optimizer_defaults = {}
 
@@ -238,10 +194,6 @@ class TestOptimizerSwitch:
             assert config.optimizer.d0 == expected["d0"]
 
     def test_optimizer_defaults_cache_multiple_optimizers(self):
-        """
-        Cache settings for multiple optimizers, switch between them,
-        and verify each is restored correctly.
-        """
         config = TrainConfig.default_values()
 
         # Configure ADAMW with custom weight_decay
@@ -271,28 +223,16 @@ class TestOptimizerSwitch:
         assert config.optimizer.momentum == 0.77
 
 
-# ===================================================================
 # 3. Optimizer default parameters coverage
-# ===================================================================
 
 class TestOptimizerDefaults:
-    """Verify that OPTIMIZER_DEFAULT_PARAMETERS entries are valid."""
-
     def test_all_optimizers_have_defaults(self):
-        """
-        Every optimizer listed in OPTIMIZER_DEFAULT_PARAMETERS should
-        correspond to a real Optimizer enum member.
-        """
         for opt_key in OPTIMIZER_DEFAULT_PARAMETERS:
             assert isinstance(opt_key, Optimizer), (
                 f"Key {opt_key!r} in OPTIMIZER_DEFAULT_PARAMETERS is not an Optimizer enum"
             )
 
     def test_default_params_are_valid_config_fields(self):
-        """
-        Every key in each optimizer's default dict should be a valid
-        TrainOptimizerConfig field.
-        """
         reference = TrainOptimizerConfig.default_values()
         valid_fields = set(reference.types.keys())
 
@@ -306,13 +246,9 @@ class TestOptimizerDefaults:
     @pytest.mark.parametrize(
         "optimizer",
         list(OPTIMIZER_DEFAULT_PARAMETERS.keys()),
-        ids=[o.name for o in OPTIMIZER_DEFAULT_PARAMETERS.keys()],
+        ids=[o.name for o in OPTIMIZER_DEFAULT_PARAMETERS],
     )
     def test_optimizer_defaults_loadable(self, optimizer: Optimizer):
-        """
-        Each optimizer's defaults should be loadable into a fresh
-        TrainOptimizerConfig without error.
-        """
         defaults = OPTIMIZER_DEFAULT_PARAMETERS[optimizer]
         config = TrainOptimizerConfig.default_values()
         config.from_dict(defaults)
@@ -321,18 +257,10 @@ class TestOptimizerDefaults:
         assert d["optimizer"] == f"Optimizer.{optimizer.value}"
 
 
-# ===================================================================
 # 4. Version migration tests
-# ===================================================================
 
 class TestVersionMigration:
-    """Test the config version migration system."""
-
     def test_version_0_migration(self):
-        """
-        A config with __version=0 should be migrated through all
-        10 migrations without error.
-        """
         # Start with a version-0 style config that has enough fields
         # to survive all subsequent migrations (0-9).
         # Migration 0: moves optimizer_* to sub-dict
@@ -373,15 +301,6 @@ class TestVersionMigration:
         assert isinstance(d, dict)
 
     def test_current_version_no_migration(self):
-        """
-        A config with __version = current should not trigger any migration.
-
-        Note: We normalize d through one from_dict pass first because
-        BaseConfig has a type coercion quirk where CloudSecretsConfig.port
-        defaults to int 0 but is registered as str type.  The first
-        from_dict coerces it to "0", after which further round-trips are
-        stable.
-        """
         config = TrainConfig.default_values()
         raw = config.to_dict()
         assert raw["__version"] == 10
@@ -400,10 +319,6 @@ class TestVersionMigration:
         assert d == d2
 
     def test_missing_version_treated_as_0(self):
-        """
-        A config dict without __version should be treated as version 0
-        and migrated through all 10 migration steps.
-        """
         data_no_version = {
             "training_method": "FINE_TUNE",
             "model_type": "STABLE_DIFFUSION_15",
@@ -429,10 +344,6 @@ class TestVersionMigration:
         assert d["__version"] == 10
 
     def test_migration_5_save_after_to_save_every(self):
-        """
-        Migration 5 renames save_after -> save_every and
-        save_after_unit -> save_every_unit.
-        """
         # Include fields needed by later migrations (8 needs model_type
         # and prior; 9 needs weight_dtype on model parts and pops
         # top-level weight_dtype).
@@ -461,10 +372,6 @@ class TestVersionMigration:
         assert config.save_every == 42
 
     def test_migration_4_gradient_checkpointing_bool_to_enum(self):
-        """
-        Migration 4 converts gradient_checkpointing from bool to
-        GradientCheckpointingMethod enum.
-        """
         from modules.util.enum.GradientCheckpointingMethod import GradientCheckpointingMethod
 
         # Version 4 data with bool gradient_checkpointing.
@@ -493,10 +400,6 @@ class TestVersionMigration:
         assert config.gradient_checkpointing == GradientCheckpointingMethod.ON
 
     def test_migration_7_lora_layers_renamed(self):
-        """
-        Migration 7 renames lora_layers -> layer_filter and
-        lora_layer_preset -> layer_filter_preset.
-        """
         # Include fields required by later migrations (8 and 9).
         # Migration 9 pops top-level weight_dtype.
         data = {
@@ -527,10 +430,6 @@ class TestVersionMigration:
         assert config.layer_filter_regex is True
 
     def test_sequential_migration_coverage(self):
-        """
-        Verify that the migration chain from version 0 to 10 is
-        fully covered (no gaps).
-        """
         config = TrainConfig.default_values()
         assert config.config_version == 10
 
@@ -540,24 +439,11 @@ class TestVersionMigration:
             )
 
 
-# ===================================================================
 # 5. Full flow: preset load -> optimizer switch -> serialize
-# ===================================================================
 
 class TestFullPresetFlow:
-    """End-to-end flow mimicking what ConfigService.load_preset does."""
-
     @pytest.mark.parametrize("preset_filename", PRESET_FILES[:10], ids=PRESET_FILES[:10])
     def test_full_load_flow(self, preset_filename: str):
-        """
-        Replicate the full preset loading flow:
-        1. Load JSON
-        2. Apply to default config (with version stamping)
-        3. to_unpacked_config
-        4. Apply to main config
-        5. change_optimizer
-        6. Serialize
-        """
         raw = _load_preset_json(preset_filename)
 
         default_config = TrainConfig.default_values()
@@ -592,36 +478,28 @@ class TestFullPresetFlow:
         )
 
     def test_to_unpacked_config_strips_concepts_and_samples(self):
-        """to_unpacked_config should produce a config with None concepts/samples."""
         config = TrainConfig.default_values()
         unpacked = config.to_unpacked_config()
         assert unpacked.concepts is None
         assert unpacked.samples is None
 
 
-# ===================================================================
 # 6. Edge cases
-# ===================================================================
 
 class TestEdgeCases:
-    """Edge cases and boundary conditions."""
-
     def test_empty_dict_loads_without_error(self):
-        """An empty dict should just leave defaults in place."""
         config = TrainConfig.default_values()
         config.from_dict({})
         d = config.to_dict()
         assert isinstance(d, dict)
 
     def test_extra_unknown_keys_ignored(self):
-        """Unknown keys in the input dict should be silently ignored."""
         config = TrainConfig.default_values()
         config.from_dict({"__version": 10, "totally_fake_key": "whatever"})
         d = config.to_dict()
         assert "totally_fake_key" not in d
 
     def test_none_nullable_fields_survive_roundtrip(self):
-        """Nullable fields set to None should stay None after round-trip."""
         config = TrainConfig.default_values()
         config.custom_learning_rate_scheduler = None
         config.clip_grad_norm = None
@@ -636,7 +514,6 @@ class TestEdgeCases:
         assert config2.clip_grad_norm is None
 
     def test_float_inf_roundtrip(self):
-        """float('inf') values must survive serialisation."""
         config = TrainConfig.default_values()
         config.optimizer.optimizer = Optimizer.PRODIGY
 
@@ -660,7 +537,6 @@ class TestEdgeCases:
         assert config2.optimizer.growth_rate == float("inf")
 
     def test_empty_list_fields_roundtrip(self):
-        """Empty list fields (scheduler_params, additional_embeddings) round-trip."""
         config = TrainConfig.default_values()
         config.scheduler_params = []
         config.additional_embeddings = []

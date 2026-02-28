@@ -23,7 +23,6 @@ interface TrainingState {
   latestSample: string | null;
   startTime: number | null;
 
-  // Setters (called by WebSocket hook)
   setStatus: (status: TrainingStatus) => void;
   setProgress: (progress: TrainingProgress) => void;
   setError: (error: string | null) => void;
@@ -32,10 +31,8 @@ interface TrainingState {
   clearSamples: () => void;
   reset: () => void;
 
-  // State recovery
   fetchStatus: () => Promise<void>;
 
-  // Training control actions (call REST API)
   startTraining: (options?: { reattach?: boolean }) => Promise<void>;
   stopTraining: () => Promise<void>;
   sampleNow: () => Promise<void>;
@@ -43,20 +40,18 @@ interface TrainingState {
   saveNow: () => Promise<void>;
 }
 
-const INITIAL_STATE = {
-  status: "idle" as TrainingStatus,
-  progress: null as TrainingProgress | null,
-  error: null as string | null,
+const INITIAL_STATE: Pick<TrainingState, "status" | "progress" | "error" | "statusText" | "sampleUrls" | "latestSample" | "startTime"> = {
+  status: "idle",
+  progress: null,
+  error: null,
   statusText: "",
-  sampleUrls: [] as string[],
-  latestSample: null as string | null,
-  startTime: null as number | null,
+  sampleUrls: [],
+  latestSample: null,
+  startTime: null,
 };
 
 export const useTrainingStore = create<TrainingState>((set, get) => ({
   ...INITIAL_STATE,
-
-  // -- Setters (called by WebSocket hook) ---------------------------------
 
   setStatus: (status) => set({ status }),
   setProgress: (progress) => set({ progress }),
@@ -64,14 +59,13 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   setStatusText: (text) => set({ statusText: text }),
   addSampleUrl: (url) =>
     set((s) => {
-      const urls = [...s.sampleUrls, url];
-      if (urls.length > 50) urls.shift();
+      const urls = s.sampleUrls.length >= 50
+        ? [...s.sampleUrls.slice(1), url]
+        : [...s.sampleUrls, url];
       return { sampleUrls: urls, latestSample: url };
     }),
   clearSamples: () => set({ sampleUrls: [], latestSample: null }),
   reset: () => set(INITIAL_STATE),
-
-  // -- State recovery -------------------------------------------------------
 
   fetchStatus: async () => {
     try {
@@ -89,8 +83,6 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       // Backend unreachable — leave current status unchanged
     }
   },
-
-  // -- Training control actions -------------------------------------------
 
   startTraining: async (options?: { reattach?: boolean }) => {
     const { status } = get();

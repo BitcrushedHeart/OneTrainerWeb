@@ -8,7 +8,7 @@ export interface ModalBaseProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
-  size?: "sm" | "md" | "lg" | "xl";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl";
   closeOnBackdrop?: boolean;
 }
 
@@ -17,43 +17,72 @@ const sizeClasses: Record<string, string> = {
   md: "max-w-[600px]",
   lg: "max-w-[800px]",
   xl: "max-w-[1000px]",
+  "2xl": "max-w-[1200px]",
 };
 
 export function ModalBase({ open, onClose, title, children, size = "md", closeOnBackdrop = true }: ModalBaseProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  // Trap focus and handle escape
+  // Handle Escape key at document level
   useEffect(() => {
     if (!open) return;
-    previousFocusRef.current = document.activeElement as HTMLElement;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [open, onClose]);
+
+  // Focus trap: keep Tab cycling within the modal and restore focus on close
+  useEffect(() => {
+    if (!open) return;
+
+    const modal = dialogRef.current;
+    if (!modal) return;
+
+    // Save the element that was focused before the modal opened
+    const previouslyFocused = document.activeElement as HTMLElement | null;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { onClose(); return; }
-      if (e.key === "Tab" && dialogRef.current) {
-        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      if (e.key !== "Tab") return;
+
+      const focusable = modal.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
 
-    document.addEventListener("keydown", handleKeyDown);
-    // Focus the dialog
+    modal.addEventListener("keydown", handleKeyDown);
+
+    // Focus the first focusable element inside the modal
     setTimeout(() => {
-      const firstFocusable = dialogRef.current?.querySelector<HTMLElement>("button, input, select, textarea");
+      const firstFocusable = modal.querySelector<HTMLElement>("button, input, select, textarea");
       firstFocusable?.focus();
     }, 50);
 
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      previousFocusRef.current?.focus();
+      modal.removeEventListener("keydown", handleKeyDown);
+      // Restore focus when modal closes
+      previouslyFocused?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -76,12 +105,10 @@ export function ModalBase({ open, onClose, title, children, size = "md", closeOn
           bg-[var(--color-surface)] border border-[var(--color-border-subtle)]
           shadow-[var(--shadow-3)] animate-[rowFade_200ms_ease-out]`}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-subtle)]">
           <h2 className="text-lg font-semibold text-[var(--color-on-surface)]">{title}</h2>
           <IconButton icon={<X className="w-full h-full" />} label="Close" variant="ghost" size="sm" onClick={onClose} />
         </div>
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {children}
         </div>

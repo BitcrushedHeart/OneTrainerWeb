@@ -1,4 +1,5 @@
 import { Card, FormEntry, FilePicker, Toggle, TimeEntry, Button, SelectKV, ArrayItemHeader } from "@/components/shared";
+import { DTYPE_SUBSETS } from "@/types/generated/dataTypeSubsets";
 import { Plus } from "lucide-react";
 import { useArrayField } from "@/hooks/useArrayField";
 import type { TrainEmbeddingConfig } from "@/types/generated/config";
@@ -63,10 +64,7 @@ export default function AdditionalEmbeddingsPage() {
             <SelectKV
               label="Weight Data Type"
               configPath={`additional_embeddings.${i}.weight_dtype`}
-              options={[
-                { label: "float32", value: "FLOAT_32" },
-                { label: "bfloat16", value: "BFLOAT_16" },
-              ]}
+              options={DTYPE_SUBSETS.embedding_weight}
             />
             <Toggle configPath={`additional_embeddings.${i}.train`} label="Train" />
             <Toggle configPath={`additional_embeddings.${i}.is_output_embedding`} label="Output Embedding" />

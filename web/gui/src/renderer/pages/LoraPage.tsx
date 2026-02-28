@@ -1,6 +1,7 @@
 import { SectionCard, FormEntry, FilePicker, Toggle, SelectKV } from "@/components/shared";
 import { useConfigField } from "@/hooks/useConfigField";
 import type { PeftType } from "@/types/generated/enums";
+import { DTYPE_SUBSETS } from "@/types/generated/dataTypeSubsets";
 
 export default function LoraPage() {
   const [peftType, setPeftType] = useConfigField<PeftType>("peft_type");
@@ -56,10 +57,7 @@ export default function LoraPage() {
               <SelectKV
                 label={`${name} Weight Data Type`}
                 configPath="lora_weight_dtype"
-                options={[
-                  { label: "float32", value: "FLOAT_32" },
-                  { label: "bfloat16", value: "BFLOAT_16" },
-                ]}
+                options={DTYPE_SUBSETS.lora_weight}
               />
               <Toggle
                 configPath="bundle_additional_embeddings"
@@ -117,10 +115,7 @@ export default function LoraPage() {
               <SelectKV
                 label="Weight Data Type"
                 configPath="lora_weight_dtype"
-                options={[
-                  { label: "float32", value: "FLOAT_32" },
-                  { label: "bfloat16", value: "BFLOAT_16" },
-                ]}
+                options={DTYPE_SUBSETS.lora_weight}
               />
               <Toggle configPath="bundle_additional_embeddings" label="Bundle Embeddings" />
             </>

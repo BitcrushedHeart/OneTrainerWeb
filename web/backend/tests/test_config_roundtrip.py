@@ -1,13 +1,3 @@
-"""
-Config round-trip tests -- HIGHEST PRIORITY test suite for OneTrainerWeb.
-
-For every preset JSON and for the default config, we verify that:
-    serialize -> deserialize -> serialize produces identical output.
-
-This guarantees that the FastAPI bridge can safely load, transmit, and
-persist configs without silent data loss or mutation.
-"""
-
 import json
 import os
 import sys
@@ -20,9 +10,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from modules.util.config.TrainConfig import TrainConfig
 
-# ---------------------------------------------------------------------------
 # Discover all preset files at collection time
-# ---------------------------------------------------------------------------
 PRESETS_DIR = os.path.join(PROJECT_ROOT, "training_presets")
 
 PRESET_FILES = sorted(
@@ -38,47 +26,23 @@ assert len(PRESET_FILES) > 0, f"No preset files found in {PRESETS_DIR}"
 
 
 def _load_preset_json(filename: str) -> dict:
-    """Load a preset JSON file and return raw dict."""
     path = os.path.join(PRESETS_DIR, filename)
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def _apply_preset_to_default(preset_data: dict) -> TrainConfig:
-    """
-    Apply a raw preset dict onto a freshly-constructed default config.
-
-    Built-in presets (filename starts with '#') are written at the latest
-    schema version, so we stamp __version to skip migrations -- exactly
-    what the real loader does (see ConfigService.load_preset).
-    """
     config = TrainConfig.default_values()
     return config.from_dict(preset_data)
 
 
 def _normalize_config_dict(d: dict) -> dict:
-    """
-    Normalize a config dict by running it through from_dict() + to_dict().
-
-    The BaseConfig system has type coercion quirks where some default values
-    have a different Python type than their registered type (e.g.
-    CloudSecretsConfig.port defaults to int 0 but is registered as str).
-    The first to_dict() on a fresh default_values() outputs the raw default
-    (int 0), but from_dict() coerces it to the registered type (str "0").
-
-    This helper ensures a dict has been through one coercion pass so that
-    subsequent round-trips are truly idempotent.
-    """
     config = TrainConfig.default_values()
     config.from_dict(d)
     return config.to_dict()
 
 
 def _deep_compare_dicts(d1: dict, d2: dict, path: str = "") -> list[str]:
-    """
-    Deep-compare two dicts and return a list of human-readable differences.
-    This gives much better diagnostics than a bare ``assert d1 == d2``.
-    """
     diffs = []
     all_keys = set(d1.keys()) | set(d2.keys())
     for key in sorted(all_keys):
@@ -96,7 +60,7 @@ def _deep_compare_dicts(d1: dict, d2: dict, path: str = "") -> list[str]:
                     f"{len(d1[key])} vs {len(d2[key])}"
                 )
             else:
-                for i, (v1, v2) in enumerate(zip(d1[key], d2[key])):
+                for i, (v1, v2) in enumerate(zip(d1[key], d2[key], strict=False)):
                     item_path = f"{current_path}[{i}]"
                     if isinstance(v1, dict) and isinstance(v2, dict):
                         diffs.extend(_deep_compare_dicts(v1, v2, item_path))
@@ -107,25 +71,11 @@ def _deep_compare_dicts(d1: dict, d2: dict, path: str = "") -> list[str]:
     return diffs
 
 
-# ===================================================================
 # 1. Preset round-trip tests (parametrize over every preset file)
-# ===================================================================
 
 @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
 class TestPresetRoundTrip:
-    """
-    For each preset file:
-      1. Load JSON, apply to default config, serialize -> dict1
-      2. Load dict1 into a fresh default config, serialize -> dict2
-      3. Assert dict1 == dict2  (idempotent round-trip)
-    """
-
     def test_roundtrip_idempotent(self, preset_filename: str):
-        """Load -> serialize -> deserialize -> serialize must be stable.
-
-        We normalize serialize_1 through one extra from_dict pass to account
-        for BaseConfig type coercion quirks (see _normalize_config_dict).
-        """
         raw = _load_preset_json(preset_filename)
 
         # Built-in presets skip migrations
@@ -149,11 +99,6 @@ class TestPresetRoundTrip:
         )
 
     def test_roundtrip_preserves_preset_values(self, preset_filename: str):
-        """
-        After loading a preset and round-tripping, the values explicitly
-        set in the preset should still be present in the serialised output.
-        We check top-level scalar keys from the original preset JSON.
-        """
         raw = _load_preset_json(preset_filename)
 
         if preset_filename.startswith("#"):
@@ -196,20 +141,10 @@ class TestPresetRoundTrip:
                     )
 
 
-# ===================================================================
 # 2. Default config round-trip
-# ===================================================================
 
 class TestDefaultConfigRoundTrip:
-    """Tests that a pristine default config round-trips cleanly."""
-
     def test_default_roundtrip(self):
-        """default_values().to_dict() -> from_dict() -> to_dict() is stable.
-
-        We normalize through one from_dict pass first to account for
-        BaseConfig type coercion quirks (see _normalize_config_dict),
-        then verify that a second pass is idempotent.
-        """
         # Normalize: default -> to_dict -> from_dict -> to_dict
         serialize_1 = _normalize_config_dict(
             TrainConfig.default_values().to_dict()
@@ -227,7 +162,6 @@ class TestDefaultConfigRoundTrip:
         )
 
     def test_default_triple_roundtrip(self):
-        """Three round-trips should still be stable."""
         config = TrainConfig.default_values()
         d1 = config.to_dict()
 
@@ -246,14 +180,12 @@ class TestDefaultConfigRoundTrip:
         )
 
     def test_default_has_version(self):
-        """The serialised dict must include __version at the current schema level."""
         config = TrainConfig.default_values()
         d = config.to_dict()
         assert "__version" in d
         assert d["__version"] == 10
 
     def test_default_has_expected_top_level_keys(self):
-        """Smoke test: the default config should contain well-known keys."""
         config = TrainConfig.default_values()
         d = config.to_dict()
         expected_keys = [
@@ -266,23 +198,10 @@ class TestDefaultConfigRoundTrip:
             assert key in d, f"Expected key '{key}' not found in default config dict"
 
 
-# ===================================================================
 # 3. to_settings_dict() round-trip
-# ===================================================================
 
 class TestSettingsDictRoundTrip:
-    """
-    to_settings_dict() strips concepts and samples.  The resulting dict
-    should still round-trip cleanly (minus the stripped fields).
-    """
-
     def test_settings_dict_roundtrip(self):
-        """settings_dict -> from_dict -> to_settings_dict must be stable.
-
-        Note: to_settings_dict() already normalizes internally via
-        from_dict(self.to_dict()), so this test should pass without
-        additional normalization.
-        """
         config = TrainConfig.default_values()
         settings_1 = config.to_settings_dict(secrets=False)
 
@@ -297,32 +216,27 @@ class TestSettingsDictRoundTrip:
         )
 
     def test_settings_dict_strips_concepts(self):
-        """to_settings_dict should have concepts=None."""
         config = TrainConfig.default_values()
         settings = config.to_settings_dict(secrets=False)
         assert settings.get("concepts") is None
 
     def test_settings_dict_strips_samples(self):
-        """to_settings_dict should have samples=None."""
         config = TrainConfig.default_values()
         settings = config.to_settings_dict(secrets=False)
         assert settings.get("samples") is None
 
     def test_settings_dict_excludes_secrets(self):
-        """When secrets=False, the 'secrets' key should not appear."""
         config = TrainConfig.default_values()
         settings = config.to_settings_dict(secrets=False)
         assert "secrets" not in settings
 
     def test_settings_dict_includes_secrets_when_asked(self):
-        """When secrets=True, the 'secrets' key should be present."""
         config = TrainConfig.default_values()
         settings = config.to_settings_dict(secrets=True)
         assert "secrets" in settings
 
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_settings_dict_roundtrip_with_preset(self, preset_filename: str):
-        """Apply preset, then to_settings_dict round-trip should be stable."""
         raw = _load_preset_json(preset_filename)
         if preset_filename.startswith("#"):
             raw["__version"] = TrainConfig.default_values().config_version
@@ -342,22 +256,10 @@ class TestSettingsDictRoundTrip:
         )
 
 
-# ===================================================================
-# 4. to_pack_dict() round-trip  (limited — needs concept/sample files)
-# ===================================================================
+# 4. to_pack_dict() round-trip  (limited -- needs concept/sample files)
 
 class TestPackDictRoundTrip:
-    """
-    to_pack_dict() inlines concepts and samples from their external JSON
-    files.  Since those files may not exist in the test environment, we
-    test the path where concepts/samples are already loaded (non-None).
-    """
-
     def test_pack_dict_roundtrip_with_inline_data(self):
-        """
-        If concepts and samples are already set on the config (not None),
-        to_pack_dict should include them and the result should round-trip.
-        """
         from modules.util.config.ConceptConfig import ConceptConfig
         from modules.util.config.SampleConfig import SampleConfig
 
@@ -372,8 +274,8 @@ class TestPackDictRoundTrip:
         config2 = TrainConfig.default_values()
         config2.from_dict(pack_1)
         # Re-populate inline data for second round
-        config2_concepts = config2.concepts
-        config2_samples = config2.samples
+        _ = config2.concepts
+        _ = config2.samples
         pack_2 = config2.to_pack_dict(secrets=False)
 
         diffs = _deep_compare_dicts(pack_1, pack_2)
@@ -383,10 +285,6 @@ class TestPackDictRoundTrip:
         )
 
     def test_pack_dict_contains_concepts_and_samples(self):
-        """
-        When concepts/samples are set, to_pack_dict must include them
-        as lists (not None).
-        """
         from modules.util.config.ConceptConfig import ConceptConfig
         from modules.util.config.SampleConfig import SampleConfig
 
@@ -404,7 +302,6 @@ class TestPackDictRoundTrip:
         assert len(pack["samples"]) == 1
 
     def test_pack_dict_excludes_secrets(self):
-        """Secrets should not appear when secrets=False."""
         from modules.util.config.ConceptConfig import ConceptConfig
         from modules.util.config.SampleConfig import SampleConfig
 
@@ -416,17 +313,9 @@ class TestPackDictRoundTrip:
         assert "secrets" not in pack
 
 
-# ===================================================================
 # 5. JSON serialisation fidelity
-# ===================================================================
 
 class TestJsonFidelity:
-    """
-    Verify that the dict produced by to_dict() survives a JSON
-    round-trip (json.dumps -> json.loads) without data loss.
-    This is important because the FastAPI bridge serialises over HTTP.
-    """
-
     def test_default_json_roundtrip(self):
         # Normalize first (see _normalize_config_dict for rationale)
         d1 = _normalize_config_dict(TrainConfig.default_values().to_dict())
@@ -445,7 +334,6 @@ class TestJsonFidelity:
 
     @pytest.mark.parametrize("preset_filename", PRESET_FILES, ids=PRESET_FILES)
     def test_preset_json_roundtrip(self, preset_filename: str):
-        """Load preset -> to_dict -> JSON -> from_dict -> to_dict must be stable."""
         raw = _load_preset_json(preset_filename)
         if preset_filename.startswith("#"):
             raw["__version"] = TrainConfig.default_values().config_version
@@ -469,13 +357,9 @@ class TestJsonFidelity:
         )
 
 
-# ===================================================================
 # 6. Sub-config round-trip tests
-# ===================================================================
 
 class TestSubConfigRoundTrip:
-    """Verify nested sub-configs individually round-trip."""
-
     def test_optimizer_config_roundtrip(self):
         from modules.util.config.TrainConfig import TrainOptimizerConfig
         config = TrainOptimizerConfig.default_values()

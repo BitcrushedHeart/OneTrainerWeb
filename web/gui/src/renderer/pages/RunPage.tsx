@@ -4,10 +4,8 @@ import { useTrainingStore, type TrainingStatus } from "@/store/trainingStore";
 import { ScalarChart } from "@/components/shared/ScalarChart";
 import { ProgressBar } from "@/components/shared";
 import { formatStep } from "@/utils/chartUtils";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { formatDuration } from "@/utils/formatDuration";
+import { useElapsedTime } from "@/hooks/useElapsedTime";
 
 interface ScalarPoint {
   wall_time: number;
@@ -21,30 +19,11 @@ interface TagData {
   lastStep: number;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Poll every 2s during active training (more aggressive than TensorboardPage). */
 const ACTIVE_POLL_MS = 2000;
-/** When preparing, poll a bit slower to avoid hammering before data exists. */
 const PREPARING_POLL_MS = 4000;
 
 const LINE_COLOR = "var(--color-orchid-600)";
 const LR_LINE_COLOR = "var(--color-violet-500)";
-
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
-
-// ---------------------------------------------------------------------------
-// StatusBadge
-// ---------------------------------------------------------------------------
 
 function StatusBadge({ status }: { status: TrainingStatus }) {
   const colorMap: Record<TrainingStatus, { bg: string; fg: string; label: string }> = {
@@ -54,17 +33,17 @@ function StatusBadge({ status }: { status: TrainingStatus }) {
       label: "Idle",
     },
     preparing: {
-      bg: "rgba(251, 191, 36, 0.12)",
+      bg: "var(--color-warning-500-alpha-12)",
       fg: "var(--color-warning-500)",
       label: "Preparing",
     },
     training: {
-      bg: "rgba(194, 24, 232, 0.12)",
+      bg: "var(--color-orchid-600-alpha-12)",
       fg: "var(--color-orchid-600)",
       label: "Training",
     },
     error: {
-      bg: "rgba(248, 113, 113, 0.12)",
+      bg: "var(--color-error-500-alpha-12)",
       fg: "var(--color-error-500)",
       label: "Error",
     },
@@ -74,29 +53,15 @@ function StatusBadge({ status }: { status: TrainingStatus }) {
 
   return (
     <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "6px",
-        padding: "3px 10px",
-        borderRadius: "9999px",
-        background: bg,
-        color: fg,
-        fontSize: "0.6875rem",
-        fontWeight: 600,
-        letterSpacing: "0.02em",
-        textTransform: "uppercase",
-      }}
+      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-label font-semibold tracking-wide uppercase"
+      style={{ background: bg, color: fg }}
     >
       {(status === "training" || status === "preparing") && (
         <span
+          className="w-1.5 h-1.5 rounded-full inline-block"
           style={{
-            width: "6px",
-            height: "6px",
-            borderRadius: "50%",
             background: fg,
-            display: "inline-block",
-            animation: "pulseError 2s infinite",
+            animation: "pulseAlive 2s infinite",
           }}
         />
       )}
@@ -104,10 +69,6 @@ function StatusBadge({ status }: { status: TrainingStatus }) {
     </span>
   );
 }
-
-// ---------------------------------------------------------------------------
-// RunPage
-// ---------------------------------------------------------------------------
 
 export default function RunPage() {
   // Training store
@@ -148,18 +109,8 @@ export default function RunPage() {
   }, [status]);
 
   // Elapsed time tracking
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (status !== "training" || !startTime) {
-      return;
-    }
-    const tick = () => setElapsed(Math.floor((Date.now() - startTime) / 1000));
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [status, startTime]);
+  const elapsed = useElapsedTime(startTime, status === "training");
 
-  // ── Auto-detect latest run when training starts ─────────────────────────
   const detectLatestRun = useCallback(async () => {
     try {
       const runs = await configApi.tensorboardRuns();
@@ -177,7 +128,6 @@ export default function RunPage() {
     return activeRunRef.current;
   }, []);
 
-  // ── Full load of tag data for a run ─────────────────────────────────────
   const loadRunTags = useCallback(async (runName: string) => {
     if (!runName) return;
     try {
@@ -214,7 +164,6 @@ export default function RunPage() {
     }
   }, []);
 
-  // ── Incremental fetch ──────────────────────────────────────────────────
   const fetchIncremental = useCallback(async () => {
     const runName = activeRunRef.current;
     if (!runName) return;
@@ -269,7 +218,6 @@ export default function RunPage() {
     }
   }, [detectLatestRun, loadRunTags]);
 
-  // ── On training start: detect run and load initial data ─────────────────
   useEffect(() => {
     if (status === "training" || status === "preparing") {
       detectLatestRun().then((run) => {
@@ -280,7 +228,6 @@ export default function RunPage() {
     }
   }, [status, detectLatestRun, loadRunTags]);
 
-  // ── Polling loop (active during training/preparing) ────────────────────
   useEffect(() => {
     if (status !== "training" && status !== "preparing") return;
 
@@ -289,17 +236,10 @@ export default function RunPage() {
     return () => clearInterval(interval);
   }, [status, fetchIncremental]);
 
-  // ── Render: Idle state ─────────────────────────────────────────────────
   if (status === "idle" && !trainingCompleted) {
     return (
       <div className="flex flex-col gap-6">
-        <div
-          className="card card-static"
-          style={{
-            padding: "48px 32px",
-            textAlign: "center",
-          }}
-        >
+        <div className="card card-static px-8 py-12 text-center">
           <svg
             width="48"
             height="48"
@@ -309,32 +249,15 @@ export default function RunPage() {
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
-            style={{ margin: "0 auto 16px auto", display: "block", opacity: 0.5 }}
+            className="mx-auto mb-4 block opacity-50"
           >
             <circle cx="12" cy="12" r="10" />
             <polygon points="10,8 16,12 10,16" fill="var(--color-on-surface-secondary)" stroke="none" />
           </svg>
-          <h3
-            style={{
-              margin: "0 0 8px 0",
-              color: "var(--color-on-surface)",
-              fontSize: "1rem",
-              fontWeight: 600,
-            }}
-          >
+          <h3 className="m-0 mb-2 text-[var(--color-on-surface)] text-body font-semibold">
             No Active Training Run
           </h3>
-          <p
-            style={{
-              margin: 0,
-              color: "var(--color-on-surface-secondary)",
-              fontSize: "0.875rem",
-              lineHeight: 1.6,
-              maxWidth: "420px",
-              marginLeft: "auto",
-              marginRight: "auto",
-            }}
-          >
+          <p className="m-0 mx-auto text-[var(--color-on-surface-secondary)] text-small leading-relaxed max-w-[420px]">
             Start a training run to see live metrics here. For historical data,
             visit the TensorBoard tab.
           </p>
@@ -343,66 +266,44 @@ export default function RunPage() {
     );
   }
 
-  // ── Render: Active / Completed state ───────────────────────────────────
   const isActive = status === "training" || status === "preparing";
   const hasChartData = (lossData && lossData.points.length > 0) || (lrData && lrData.points.length > 0);
 
   return (
     <div className="flex flex-col gap-6">
-      {/* ── Status Bar ── */}
       <div
-        className="card card-static"
+        className="card card-static px-5 py-4"
         style={{
-          padding: "16px 20px",
           borderColor: isActive
-            ? "rgba(194, 24, 232, 0.2)"
+            ? "var(--color-orchid-600-alpha-20)"
             : trainingCompleted
-              ? "rgba(45, 212, 191, 0.2)"
+              ? "var(--color-success-500-alpha-20)"
               : undefined,
           background: isActive
-            ? "linear-gradient(135deg, rgba(194, 24, 232, 0.04), rgba(138, 77, 255, 0.04))"
+            ? "linear-gradient(135deg, var(--color-orchid-600-alpha-04), var(--color-violet-500-alpha-04))"
             : undefined,
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "16px",
-            flexWrap: "wrap",
-          }}
-        >
-          {/* Status badge */}
+        <div className="flex items-center gap-4 flex-wrap">
           <StatusBadge status={status} />
 
-          {/* Progress info */}
           {progress && (
             <>
-              <div style={{ flex: 1, minWidth: "120px" }}>
+              <div className="flex-1 min-w-[120px]">
                 <ProgressBar value={progress.maxStep > 0 ? (progress.step / progress.maxStep) * 100 : 0} />
               </div>
 
-              <div
-                className="mono tabular-nums"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "16px",
-                  fontSize: "0.75rem",
-                  color: "var(--color-on-surface-secondary)",
-                  whiteSpace: "nowrap",
-                }}
-              >
+              <div className="mono tabular-nums flex items-center gap-4 text-micro text-[var(--color-on-surface-secondary)] whitespace-nowrap">
                 <span>
                   Step{" "}
-                  <span style={{ color: "var(--color-on-surface)", fontWeight: 600 }}>
+                  <span className="text-[var(--color-on-surface)] font-semibold">
                     {formatStep(progress.step)}
                   </span>
                   /{formatStep(progress.maxStep)}
                 </span>
                 <span>
                   Epoch{" "}
-                  <span style={{ color: "var(--color-on-surface)", fontWeight: 600 }}>
+                  <span className="text-[var(--color-on-surface)] font-semibold">
                     {progress.epoch}
                   </span>
                   /{progress.maxEpoch}
@@ -414,60 +315,28 @@ export default function RunPage() {
             </>
           )}
 
-          {/* Status text */}
           {statusText && !progress && (
-            <span
-              style={{
-                fontSize: "0.8125rem",
-                color: "var(--color-on-surface-secondary)",
-              }}
-            >
+            <span className="text-caption text-[var(--color-on-surface-secondary)]">
               {statusText}
             </span>
           )}
 
-          {/* Live indicator */}
           {isActive && (
-            <span
-              style={{
-                fontSize: "0.6875rem",
-                color: "var(--color-success-500)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                marginLeft: "auto",
-              }}
-            >
+            <span className="text-label text-[var(--color-success-500)] inline-flex items-center gap-1 ml-auto">
               <span
-                style={{
-                  width: "6px",
-                  height: "6px",
-                  borderRadius: "50%",
-                  background: "var(--color-success-500)",
-                  display: "inline-block",
-                  animation: "pulseError 2s infinite",
-                }}
+                className="w-1.5 h-1.5 rounded-full inline-block bg-[var(--color-success-500)]"
+                style={{ animation: "pulseAlive 2s infinite" }}
               />
               Live
             </span>
           )}
         </div>
 
-        {/* Training completed banner */}
         {trainingCompleted && (
-          <div
+          <div className="mt-3 px-3 py-2 rounded-md flex items-center gap-2 text-caption font-medium text-[var(--color-success-500)]"
             style={{
-              marginTop: "12px",
-              padding: "8px 12px",
-              borderRadius: "6px",
-              background: "rgba(45, 212, 191, 0.08)",
-              border: "1px solid rgba(45, 212, 191, 0.15)",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              fontSize: "0.8125rem",
-              color: "var(--color-success-500)",
-              fontWeight: 500,
+              background: "var(--color-success-500-alpha-08)",
+              border: "1px solid var(--color-success-500-alpha-15)",
             }}
           >
             <svg
@@ -486,18 +355,12 @@ export default function RunPage() {
           </div>
         )}
 
-        {/* Error display */}
         {status === "error" && error && (
           <div
+            className="mt-3 px-3 py-2 rounded-md text-caption font-medium text-[var(--color-error-500)]"
             style={{
-              marginTop: "12px",
-              padding: "8px 12px",
-              borderRadius: "6px",
-              background: "rgba(248, 113, 113, 0.08)",
-              border: "1px solid rgba(248, 113, 113, 0.15)",
-              fontSize: "0.8125rem",
-              color: "var(--color-error-500)",
-              fontWeight: 500,
+              background: "var(--color-error-500-alpha-08)",
+              border: "1px solid var(--color-error-500-alpha-15)",
             }}
           >
             {error}
@@ -505,212 +368,83 @@ export default function RunPage() {
         )}
       </div>
 
-      {/* ── Waiting for data ── */}
       {isActive && !hasChartData && (
-        <div
-          className="card card-static"
-          style={{
-            padding: "32px",
-            textAlign: "center",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
-          <div
-            className="skeleton"
-            style={{
-              width: "200px",
-              height: "8px",
-              borderRadius: "4px",
-            }}
-          />
-          <span
-            style={{
-              color: "var(--color-on-surface-secondary)",
-              fontSize: "0.875rem",
-            }}
-          >
+        <div className="card card-static p-8 text-center flex flex-col items-center gap-3">
+          <div className="skeleton w-[200px] h-2 rounded" />
+          <span className="text-[var(--color-on-surface-secondary)] text-small">
             Waiting for training data...
           </span>
         </div>
       )}
 
-      {/* ── Main content: Charts + Samples ── */}
       {(hasChartData || sampleUrls.length > 0) && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
-            gap: "16px",
-            alignItems: "start",
-          }}
-        >
-          {/* Left column: Charts (2/3 width) */}
-          <div
-            style={{
-              gridColumn: "1 / 3",
-              display: "flex",
-              flexDirection: "column",
-              gap: "16px",
-            }}
-          >
-            {/* Loss chart */}
+        <div className="grid grid-cols-3 gap-4 items-start">
+          <div className="col-span-2 flex flex-col gap-4">
             <ScalarChart
               tag="Loss"
               points={lossData?.points ?? []}
               lineColor={LINE_COLOR}
             />
 
-            {/* Learning rate chart */}
             <ScalarChart
               tag="Learning Rate"
               points={lrData?.points ?? []}
               lineColor={LR_LINE_COLOR}
             />
 
-            {/* Active run info */}
             {activeRun && (
-              <div
-                style={{
-                  fontSize: "0.6875rem",
-                  color: "var(--color-on-surface-secondary)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  paddingLeft: "4px",
-                }}
-              >
-                <span style={{ opacity: 0.6 }}>Run:</span>
-                <span className="mono" style={{ fontWeight: 500 }}>
+              <div className="text-label text-[var(--color-on-surface-secondary)] flex items-center gap-1.5 pl-1">
+                <span className="opacity-60">Run:</span>
+                <span className="mono font-medium">
                   {activeRun}
                 </span>
               </div>
             )}
           </div>
 
-          {/* Right column: Samples (1/3 width) */}
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "16px",
-            }}
-          >
-            {/* Latest sample */}
-            <div className="card card-static" style={{ padding: "16px" }}>
-              <h4
-                style={{
-                  margin: "0 0 12px 0",
-                  fontSize: "0.8125rem",
-                  fontWeight: 600,
-                  color: "var(--color-on-surface)",
-                }}
-              >
+          <div className="flex flex-col gap-4">
+            <div className="card card-static p-4">
+              <h4 className="m-0 mb-3 text-caption font-semibold text-[var(--color-on-surface)]">
                 Latest Sample
               </h4>
               {latestSample ? (
-                <div
-                  style={{
-                    borderRadius: "6px",
-                    overflow: "hidden",
-                    border: "1px solid var(--color-border-subtle)",
-                    background: "var(--color-input-bg)",
-                  }}
-                >
+                <div className="rounded-md overflow-hidden border border-[var(--color-border-subtle)] bg-[var(--color-input-bg)]">
                   <img
                     src={latestSample}
                     alt="Latest training sample"
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      maxHeight: "300px",
-                      objectFit: "contain",
-                    }}
+                    className="block w-full max-h-[300px] object-contain"
                   />
                 </div>
               ) : (
-                <div
-                  style={{
-                    height: "160px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: "6px",
-                    border: "1px dashed var(--color-border-subtle)",
-                    color: "var(--color-on-surface-secondary)",
-                    fontSize: "0.8125rem",
-                  }}
-                >
+                <div className="h-40 flex items-center justify-center rounded-md border border-dashed border-[var(--color-border-subtle)] text-[var(--color-on-surface-secondary)] text-caption">
                   No samples yet
                 </div>
               )}
             </div>
 
-            {/* Sample gallery */}
             {sampleUrls.length > 1 && (
-              <div className="card card-static" style={{ padding: "16px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "baseline",
-                    marginBottom: "12px",
-                  }}
-                >
-                  <h4
-                    style={{
-                      margin: 0,
-                      fontSize: "0.8125rem",
-                      fontWeight: 600,
-                      color: "var(--color-on-surface)",
-                    }}
-                  >
+              <div className="card card-static p-4">
+                <div className="flex justify-between items-baseline mb-3">
+                  <h4 className="m-0 text-caption font-semibold text-[var(--color-on-surface)]">
                     Sample History
                   </h4>
-                  <span
-                    className="mono tabular-nums"
-                    style={{
-                      fontSize: "0.6875rem",
-                      color: "var(--color-on-surface-secondary)",
-                    }}
-                  >
+                  <span className="mono tabular-nums text-label text-[var(--color-on-surface-secondary)]">
                     {sampleUrls.length}
                   </span>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "8px",
-                    maxHeight: "400px",
-                    overflowY: "auto",
-                  }}
-                >
-                  {/* Show most recent first, excluding the latest (already shown above) */}
+                <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
                   {[...sampleUrls]
                     .reverse()
                     .slice(1)
                     .map((url, idx) => (
                       <div
                         key={idx}
-                        style={{
-                          borderRadius: "4px",
-                          overflow: "hidden",
-                          border: "1px solid var(--color-border-subtle)",
-                          background: "var(--color-input-bg)",
-                        }}
+                        className="rounded overflow-hidden border border-[var(--color-border-subtle)] bg-[var(--color-input-bg)]"
                       >
                         <img
                           src={url}
-                          alt={`Training sample ${sampleUrls.length - 1 - idx}`}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            maxHeight: "180px",
-                            objectFit: "contain",
-                          }}
+                          alt="Training sample"
+                          className="block w-full max-h-[180px] object-contain"
                         />
                       </div>
                     ))}

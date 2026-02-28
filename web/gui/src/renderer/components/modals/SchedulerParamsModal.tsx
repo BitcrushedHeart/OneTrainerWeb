@@ -87,7 +87,7 @@ export function SchedulerParamsModal({ open, onClose }: SchedulerParamsModalProp
               placeholder="value"
               className="px-3 py-2 rounded-[var(--radius-sm)] text-sm bg-[var(--color-surface-raised)] border border-[var(--color-border-subtle)] text-[var(--color-on-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-orchid-600)]"
             />
-            <button onClick={() => removeParam(i)} className="flex items-center justify-center text-red-500 hover:text-red-400 cursor-pointer" aria-label="Remove parameter">
+            <button onClick={() => removeParam(i)} className="flex items-center justify-center text-[var(--color-error-500)] hover:opacity-80 cursor-pointer" aria-label="Remove parameter">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>

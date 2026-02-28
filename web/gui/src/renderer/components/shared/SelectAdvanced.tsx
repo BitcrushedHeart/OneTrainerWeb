@@ -19,7 +19,7 @@ export interface SelectAdvancedProps {
 }
 
 export function SelectAdvanced({ label, options, configPath, value: controlledValue, onChange, onAdvancedClick, tooltip, disabled, formatLabel = enumLabel }: SelectAdvancedProps) {
-  const [configValue, setConfigValue] = useConfigField<string>(configPath ?? "__unused__");
+  const [configValue, setConfigValue] = useConfigField<string>(configPath);
 
   const currentValue = configPath ? (configValue ?? "") : (controlledValue ?? "");
 

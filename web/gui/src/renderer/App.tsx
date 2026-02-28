@@ -4,9 +4,11 @@ import { useConfigStore } from "./store/configStore";
 import { useTrainingStore } from "./store/trainingStore";
 import { configApi } from "./api/configApi";
 import { useTrainingWebSocket } from "./hooks/useTrainingWebSocket";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import TopBar from "./components/layout/TopBar";
 import BottomBar from "./components/layout/BottomBar";
 import TabNavigation from "./components/layout/TabNavigation";
+import TerminalPanel from "./components/layout/TerminalPanel";
 
 // Lazy-loaded page components for code splitting
 const GeneralPage = lazy(() => import("./pages/GeneralPage"));
@@ -78,6 +80,7 @@ export default function App() {
   const activeTab = useUiStore((s) => s.activeTab);
   const setBackendConnected = useUiStore((s) => s.setBackendConnected);
   const backendConnected = useUiStore((s) => s.backendConnected);
+  const terminalOpen = useUiStore((s) => s.terminalOpen);
   const loadConfig = useConfigStore((s) => s.loadConfig);
   const autoLoadPreset = useConfigStore((s) => s.autoLoadPreset);
   const fetchTrainingStatus = useTrainingStore((s) => s.fetchStatus);
@@ -114,7 +117,9 @@ export default function App() {
       await autoLoadPreset();
       await fetchTrainingStatus();
     };
-    init();
+    init().catch((err) => {
+      console.error("App initialization failed:", err);
+    });
   }, [backendConnected, loadConfig, autoLoadPreset, fetchTrainingStatus]);
 
   return (
@@ -129,10 +134,15 @@ export default function App() {
       >
         <div className="tab-content-inner">
           <Suspense fallback={<div className="skeleton" style={{ height: 200 }} aria-busy="true" aria-label="Loading page" />}>
-            <TabContent />
+            <ErrorBoundary>
+              <TabContent />
+            </ErrorBoundary>
           </Suspense>
         </div>
       </main>
+      {terminalOpen && (
+        <TerminalPanel isOpen={terminalOpen} backendConnected={backendConnected} />
+      )}
       <BottomBar />
     </div>
   );

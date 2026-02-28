@@ -1,12 +1,17 @@
+import contextlib
 import os
 import random
+import threading
+import time
 from functools import lru_cache
-
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
 
 from web.backend.services.concept_service import ConceptService
 from web.backend.services.config_service import ConfigService
+from web.backend.utils.path_security import validate_path
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/concepts", tags=["concepts"])
 
@@ -16,12 +21,6 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 @lru_cache(maxsize=256)
 def _pick_thumbnail(dir_path: str) -> str | None:
-    """
-    Scan *dir_path* for image files and return a randomly-chosen path.
-
-    The result is cached by directory path so repeated requests for the
-    same concept return the same thumbnail.
-    """
     if not os.path.isdir(dir_path):
         return None
 
@@ -43,12 +42,7 @@ def _pick_thumbnail(dir_path: str) -> str | None:
 
 @router.get("/thumbnail")
 def get_thumbnail(path: str = Query(..., description="Directory path to scan for images")):
-    """
-    Return a random image from the given directory as a file download.
-
-    The chosen image is cached per directory so that the same thumbnail
-    is returned on repeated requests for the same concept path.
-    """
+    path = validate_path(path, allow_file=False)
     chosen = _pick_thumbnail(path)
     if chosen is None:
         raise HTTPException(status_code=404, detail="No images found in directory")
@@ -62,13 +56,7 @@ def list_images(
     offset: int = Query(0, ge=0, description="Start index"),
     limit: int = Query(50, ge=1, le=200, description="Max images to return"),
 ):
-    """
-    List image files in a concept directory with their companion caption
-    (.txt file with same stem).  Used by the ConceptEditorModal image
-    browser.
-    """
-    if not os.path.isdir(path):
-        raise HTTPException(status_code=404, detail="Directory not found")
+    path = validate_path(path, allow_file=False)
 
     entries: list[dict] = []
     try:
@@ -90,8 +78,8 @@ def list_images(
                         "path": entry.path.replace("\\", "/"),
                         "caption": caption,
                     })
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Permission denied")
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail="Permission denied") from err
 
     total = len(entries)
     page = entries[offset:offset + limit]
@@ -101,9 +89,7 @@ def list_images(
 
 @router.get("/image")
 def get_image(path: str = Query(..., description="Full path to an image file")):
-    """Serve a single image file by its absolute path."""
-    if not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="Image file not found")
+    path = validate_path(path, allow_dir=False)
 
     ext = os.path.splitext(path)[1].lower()
     if ext not in _IMAGE_EXTENSIONS:
@@ -112,12 +98,26 @@ def get_image(path: str = Query(..., description="Full path to an image file")):
     return FileResponse(path, media_type="image/*")
 
 
+@router.get("/text-file")
+def get_text_file(path: str = Query(..., description="Path to a text file")):
+    path = validate_path(path, allow_dir=False)
+
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in {".txt", ".caption", ".csv"}:
+        raise HTTPException(status_code=400, detail="Not a supported text file")
+
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+        return JSONResponse({"content": content})
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Permission denied") from exc
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid file encoding") from exc
+
+
 @router.get("")
 def get_concepts() -> list[dict]:
-    """
-    Load concepts from the file referenced by the current config's
-    concept_file_name field.
-    """
     service = ConfigService.get_instance()
     concept_path = service.config.concept_file_name
 
@@ -138,10 +138,6 @@ def get_concepts() -> list[dict]:
 
 @router.put("")
 def save_concepts(concepts: list[dict]) -> dict:
-    """
-    Save concepts to the file referenced by the current config's
-    concept_file_name field.
-    """
     service = ConfigService.get_instance()
     concept_path = service.config.concept_file_name
 
@@ -155,3 +151,62 @@ def save_concepts(concepts: list[dict]) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"saved": len(concepts), "path": concept_path}
+
+
+# Module-level cancel flag for stats scanning
+_stats_cancel_flag = threading.Event()
+
+
+class StatsRequest(BaseModel):
+    path: str
+    include_subdirectories: bool = False
+    advanced: bool = False
+
+
+@router.post("/stats")
+def scan_concept_stats(req: StatsRequest):
+    req.path = validate_path(req.path, allow_file=False)
+
+    try:
+        from modules.util import concept_stats
+        from modules.util.config.ConceptConfig import ConceptConfig
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backend modules not available: {exc}",
+        ) from exc
+
+    _stats_cancel_flag.clear()
+    start_time = time.perf_counter()
+
+    concept_config = ConceptConfig.default_values()
+    concept_config.path = req.path
+    concept_config.include_subdirectories = req.include_subdirectories
+
+    stats_dict = concept_stats.init_concept_stats(req.advanced)
+
+    subfolders = [req.path]
+    wait_time = 9999  # No timeout — cancellation via flag
+
+    for folder in subfolders:
+        if _stats_cancel_flag.is_set():
+            break
+        stats_dict = concept_stats.folder_scan(
+            folder, stats_dict, req.advanced, concept_config,
+            start_time, wait_time, _stats_cancel_flag,
+        )
+        if req.include_subdirectories and not _stats_cancel_flag.is_set():
+            with contextlib.suppress(PermissionError):
+                subfolders.extend(
+                    entry.path for entry in os.scandir(folder) if entry.is_dir()
+                )
+
+    stats_dict["processing_time"] = round(time.perf_counter() - start_time, 3)
+
+    return JSONResponse(stats_dict)
+
+
+@router.delete("/stats/cancel")
+def cancel_concept_stats():
+    _stats_cancel_flag.set()
+    return {"cancelled": True}

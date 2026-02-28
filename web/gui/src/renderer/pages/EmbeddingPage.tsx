@@ -1,4 +1,5 @@
 import { SectionCard, FormEntry, FilePicker, Toggle, SelectKV } from "@/components/shared";
+import { DTYPE_SUBSETS } from "@/types/generated/dataTypeSubsets";
 
 export default function EmbeddingPage() {
   return (
@@ -26,10 +27,7 @@ export default function EmbeddingPage() {
           <SelectKV
             label="Weight Data Type"
             configPath="embedding_weight_dtype"
-            options={[
-              { label: "float32", value: "FLOAT_32" },
-              { label: "bfloat16", value: "BFLOAT_16" },
-            ]}
+            options={DTYPE_SUBSETS.embedding_weight}
           />
           <Toggle
             configPath="embedding.is_output_embedding"

@@ -16,7 +16,7 @@ export interface PathPickerProps {
 }
 
 export function PathPicker({ label, mode, configPath, value: controlledValue, onChange, filters, tooltip, disabled }: PathPickerProps) {
-  const [configValue, setConfigValue] = useConfigField<string>(configPath ?? "__unused__");
+  const [configValue, setConfigValue] = useConfigField<string>(configPath);
 
   const externalValue = configPath ? (configValue ?? "") : (controlledValue ?? "");
   const [localValue, setLocalValue] = useState(externalValue);

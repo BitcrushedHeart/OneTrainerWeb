@@ -47,12 +47,9 @@ export function ProfilingPanel({ open, onClose }: ProfilingPanelProps) {
       </div>
 
       <div className="flex justify-end mt-6 pt-4 border-t border-[var(--color-border-subtle)]">
-        <button
-          onClick={onClose}
-          className="px-4 py-2 rounded-[var(--radius-sm)] text-sm font-medium bg-transparent border border-[var(--color-border-subtle)] text-[var(--color-on-surface)] hover:border-[var(--color-orchid-600)] transition-colors duration-200 cursor-pointer"
-        >
+        <Button variant="secondary" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
     </ModalBase>
   );

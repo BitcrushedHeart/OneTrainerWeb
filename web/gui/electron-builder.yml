@@ -19,10 +19,14 @@ extraResources:
     to: modules/
     filter:
       - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   - from: ../../scripts/
     to: scripts/
     filter:
       - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   - from: ../../training_presets/
     to: training_presets/
     filter:
@@ -47,7 +51,7 @@ mac:
       arch:
         - x64
         - arm64
-  icon: build/icon.icns
+  icon: build/icon.png
   category: public.app-category.developer-tools
 
 linux:

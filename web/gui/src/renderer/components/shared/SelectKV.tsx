@@ -19,7 +19,7 @@ export interface SelectKVProps {
 }
 
 export function SelectKV({ label, options, configPath, value: controlledValue, onChange, tooltip, disabled }: SelectKVProps) {
-  const [configValue, setConfigValue] = useConfigField<string>(configPath ?? "__unused__");
+  const [configValue, setConfigValue] = useConfigField<string>(configPath);
 
   const currentValue = configPath ? (configValue ?? "") : (controlledValue ?? "");
 

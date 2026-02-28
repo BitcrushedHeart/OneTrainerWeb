@@ -7,25 +7,8 @@ import { configApi, type PresetInfo } from "@/api/configApi";
 import { ModelTypeValues } from "@/types/generated/enums";
 import type { ModelType, TrainingMethod } from "@/types/generated/enums";
 import { enumLabel } from "@/utils/enumLabels";
-
-// Training methods available per model type family
-function getMethodsForModel(modelType: ModelType): TrainingMethod[] {
-  const all4: TrainingMethod[] = ["FINE_TUNE", "LORA", "EMBEDDING", "FINE_TUNE_VAE"];
-  const all3: TrainingMethod[] = ["FINE_TUNE", "LORA", "EMBEDDING"];
-  const just2: TrainingMethod[] = ["FINE_TUNE", "LORA"];
-
-  // SD 1.5, 2.0, 2.1 variants support all 4 methods (includes FINE_TUNE_VAE)
-  if (
-    modelType.startsWith("STABLE_DIFFUSION_15") ||
-    modelType.startsWith("STABLE_DIFFUSION_20") ||
-    modelType.startsWith("STABLE_DIFFUSION_21")
-  )
-    return all4;
-  // Flux 2, Qwen, Z-Image only support FINE_TUNE and LORA
-  if (modelType === "FLUX_2" || modelType === "QWEN" || modelType === "Z_IMAGE") return just2;
-  // All others support FINE_TUNE, LORA, EMBEDDING
-  return all3;
-}
+import { TRAINING_METHODS_BY_MODEL } from "@/types/generated/modelTypeInfo";
+import { SavePresetModal } from "@/components/modals/SavePresetModal";
 
 export default function TopBar() {
   const { theme, toggleTheme, backendConnected } = useUiStore();
@@ -35,6 +18,7 @@ export default function TopBar() {
   const [modelType, setModelType] = useConfigField<ModelType>("model_type");
   const [trainingMethod, setTrainingMethod] = useConfigField<TrainingMethod>("training_method");
   const [presets, setPresets] = useState<PresetInfo[]>([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
   useEffect(() => {
     if (backendConnected) {
@@ -47,20 +31,27 @@ export default function TopBar() {
     }
   }, [backendConnected]);
 
-  const availableMethods = getMethodsForModel(modelType ?? "STABLE_DIFFUSION_15");
+  const availableMethods = TRAINING_METHODS_BY_MODEL[modelType ?? "STABLE_DIFFUSION_15"];
 
   const handlePresetLoad = (path: string) => {
     const preset = presets.find((p) => p.path === path);
     loadPreset(path, preset?.name);
   };
   const handleSavePreset = () => {
-    const name = prompt("Preset name:");
-    if (name) savePreset(name);
+    setShowSaveModal(true);
+  };
+  const handleSavePresetConfirm = async (name: string) => {
+    await savePreset(name);
+    setShowSaveModal(false);
+    try {
+      const updated = await configApi.listPresets();
+      setPresets(updated);
+    } catch { /* best-effort refresh */ }
   };
   const handleModelChange = (val: string) => {
     setModelType(val as ModelType);
     // If current training method is not compatible with new model, reset to FINE_TUNE
-    const methods = getMethodsForModel(val as ModelType);
+    const methods = TRAINING_METHODS_BY_MODEL[val as ModelType];
     if (trainingMethod && !methods.includes(trainingMethod)) {
       setTrainingMethod("FINE_TUNE");
     }
@@ -152,6 +143,11 @@ export default function TopBar() {
           {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
       </div>
+      <SavePresetModal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        onSave={handleSavePresetConfirm}
+      />
     </header>
   );
 }

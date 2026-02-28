@@ -1,8 +1,10 @@
+import { useElapsedTime } from "@/hooks/useElapsedTime";
 import { DualProgress } from "@/components/shared";
-import { Download, Bug, Play, Square, Camera, Save, HardDrive, Loader2, RefreshCw } from "lucide-react";
+import { Download, Terminal, Play, Square, Camera, Save, HardDrive, Loader2, RefreshCw, Clock, Timer } from "lucide-react";
 import { useConfigStore, getByPath } from "@/store/configStore";
 import { useTrainingStore } from "@/store/trainingStore";
 import { useUiStore } from "@/store/uiStore";
+import { formatDuration } from "@/utils/formatDuration";
 
 export default function BottomBar() {
   const exportConfig = useConfigStore((s) => s.exportConfig);
@@ -13,6 +15,8 @@ export default function BottomBar() {
   const cloudEnabled = config ? getByPath(config as unknown as Record<string, unknown>, "cloud.enabled") === true : false;
 
   const backendConnected = useUiStore((s) => s.backendConnected);
+  const terminalOpen = useUiStore((s) => s.terminalOpen);
+  const toggleTerminal = useUiStore((s) => s.toggleTerminal);
   const status = useTrainingStore((s) => s.status);
   const progress = useTrainingStore((s) => s.progress);
   const statusText = useTrainingStore((s) => s.statusText);
@@ -24,8 +28,13 @@ export default function BottomBar() {
   const backupNow = useTrainingStore((s) => s.backupNow);
   const saveNow = useTrainingStore((s) => s.saveNow);
 
+  const startTime = useTrainingStore((s) => s.startTime);
+
   const isActive = status === "training" || status === "preparing";
   const isStopping = statusText === "Stopping...";
+
+  // Elapsed time ticker (updates every second during training)
+  const elapsed = useElapsedTime(startTime, status === "training");
 
   const epochProgress = progress
     ? progress.maxEpoch > 0
@@ -66,26 +75,43 @@ export default function BottomBar() {
       <div className="bottom-bar-left" role="status" aria-live="polite" aria-atomic="true">
         {isActive ? (
           <>
-            <DualProgress
-              epochProgress={epochProgress}
-              stepProgress={stepProgress}
-              epochLabel={progress ? `Epoch ${progress.epoch}/${progress.maxEpoch}` : "Epoch"}
-              stepLabel={progress ? `Step ${progress.step}/${progress.maxStep}` : "Step"}
-            />
+            <div className="progress-glow">
+              <DualProgress
+                epochProgress={epochProgress}
+                stepProgress={stepProgress}
+                epochLabel={progress ? `Epoch ${progress.epoch}/${progress.maxEpoch}` : "Epoch"}
+                stepLabel={progress ? `Step ${progress.step}/${progress.maxStep}` : "Step"}
+              />
+            </div>
             <span className="text-sm text-[var(--color-on-surface-secondary)] ml-2">
               {statusText || "Training..."}
             </span>
+            {/* Elapsed time and ETA */}
+            {status === "training" && elapsed > 0 && (
+              <span className="flex items-center gap-3 ml-3 text-xs tabular-nums text-[var(--color-on-surface-secondary)]">
+                <span className="flex items-center gap-1" title="Elapsed time">
+                  <Clock className="w-3 h-3 opacity-60" />
+                  {formatDuration(elapsed)}
+                </span>
+                {progress?.remainingTime != null && progress.remainingTime > 0 && (
+                  <span className="flex items-center gap-1" title="Estimated time remaining">
+                    <Timer className="w-3 h-3 opacity-60" />
+                    ETA {formatDuration(progress.remainingTime)}
+                  </span>
+                )}
+              </span>
+            )}
           </>
         ) : status === "error" ? (
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
-            <span className="text-sm font-medium text-red-400">
+            <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-error-500)] inline-block" />
+            <span className="text-sm font-medium text-[var(--color-error-500)]">
               {error || statusText || "Training error"}
             </span>
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" />
+            <span className="w-2.5 h-2.5 rounded-full bg-[var(--color-success-500)] inline-block" />
             <span className="text-sm font-medium text-[var(--color-on-surface)]">
               Ready to Train
             </span>
@@ -107,27 +133,30 @@ export default function BottomBar() {
           <>
             <button
               onClick={sampleNow}
-              className="theme-toggle"
-              aria-label="Sample Now"
+              className="theme-toggle gap-1.5"
+              aria-label="Take sample"
               title="Sample Now"
             >
               <Camera className="w-4 h-4" />
+              <span className="text-xs hidden lg:inline">Sample</span>
             </button>
             <button
               onClick={backupNow}
-              className="theme-toggle"
-              aria-label="Backup Now"
+              className="theme-toggle gap-1.5"
+              aria-label="Create backup"
               title="Backup Now"
             >
               <HardDrive className="w-4 h-4" />
+              <span className="text-xs hidden lg:inline">Backup</span>
             </button>
             <button
               onClick={saveNow}
-              className="theme-toggle"
-              aria-label="Save Now"
+              className="theme-toggle gap-1.5"
+              aria-label="Save model"
               title="Save Now"
             >
               <Save className="w-4 h-4" />
+              <span className="text-xs hidden lg:inline">Save</span>
             </button>
           </>
         )}
@@ -137,7 +166,7 @@ export default function BottomBar() {
           <img
             src={latestSample}
             alt="Latest sample"
-            className="h-8 w-8 rounded object-cover border border-[var(--color-border)]"
+            className="h-8 w-8 rounded object-cover border border-[var(--color-border-subtle)]"
             title="Latest training sample"
           />
         )}
@@ -145,8 +174,14 @@ export default function BottomBar() {
         <button onClick={handleExport} className="theme-toggle" aria-label="Export config" title="Export config">
           <Download className="w-4 h-4" />
         </button>
-        <button className="theme-toggle" disabled aria-label="Debug" title="Debug">
-          <Bug className="w-4 h-4" />
+        <button
+          className={`theme-toggle${terminalOpen ? " terminal-toggle-active" : ""}`}
+          onClick={toggleTerminal}
+          aria-label={terminalOpen ? "Hide terminal panel" : "Show terminal panel"}
+          aria-pressed={terminalOpen}
+          title={terminalOpen ? "Hide Terminal" : "Show Terminal"}
+        >
+          <Terminal className="w-4 h-4" />
         </button>
 
         {/* Cloud Reattach button — shown when cloud is enabled and not training */}
@@ -155,6 +190,7 @@ export default function BottomBar() {
             className="action-button"
             onClick={() => startTraining({ reattach: true })}
             disabled={!backendConnected}
+            aria-label="Reattach to cloud training"
             title="Reattach to a detached cloud training run"
           >
             <RefreshCw className="w-4 h-4 inline mr-1" /> Reattach
@@ -166,6 +202,7 @@ export default function BottomBar() {
           className="action-button"
           onClick={handleTrainingButton}
           disabled={isStopping || (!isActive && !backendConnected)}
+          aria-label={isStopping ? "Stopping training" : isActive ? "Stop training" : "Start training"}
         >
           {isStopping ? (
             <><Loader2 className="w-4 h-4 inline mr-1 animate-spin" /> Stopping...</>

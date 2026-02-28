@@ -28,23 +28,23 @@ const typeStyles: Record<ConceptType, {
 }> = {
   STANDARD: {
     border: "var(--color-orchid-600)",
-    badgeBg: "rgba(194, 24, 232, 0.15)",
+    badgeBg: "var(--color-orchid-600-alpha-15)",
     badgeText: "var(--color-orchid-600)",
-    overlay: "rgba(194, 24, 232, 0.06)",
+    overlay: "var(--color-orchid-600-alpha-06)",
     label: "Standard",
   },
   VALIDATION: {
     border: "var(--color-success-500)",
-    badgeBg: "rgba(45, 212, 191, 0.15)",
+    badgeBg: "var(--color-success-500-alpha-15)",
     badgeText: "var(--color-success-500)",
-    overlay: "rgba(45, 212, 191, 0.06)",
+    overlay: "var(--color-success-500-alpha-06)",
     label: "Validation",
   },
   PRIOR_PREDICTION: {
     border: "var(--color-warning-500)",
-    badgeBg: "rgba(251, 191, 36, 0.15)",
+    badgeBg: "var(--color-warning-500-alpha-15)",
     badgeText: "var(--color-warning-500)",
-    overlay: "rgba(251, 191, 36, 0.06)",
+    overlay: "var(--color-warning-500-alpha-06)",
     label: "Prior",
   },
 };

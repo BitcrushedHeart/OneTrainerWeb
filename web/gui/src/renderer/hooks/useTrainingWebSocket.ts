@@ -1,33 +1,7 @@
-/**
- * React hook for connecting to the /ws/training WebSocket endpoint.
- *
- * Dispatches incoming progress/status/sample/error messages to the
- * training Zustand store.  Handles reconnection with exponential backoff.
- *
- * Progress messages are throttled via requestAnimationFrame so the UI
- * never re-renders faster than ~60fps, regardless of WebSocket throughput.
- */
-
 import { useCallback, useEffect, useRef } from "react";
 import { useTrainingStore } from "@/store/trainingStore";
+import { useReconnectingWebSocket } from "./useReconnectingWebSocket";
 
-// Protocol-aware WebSocket URL
-const isFileProtocol =
-  typeof window !== "undefined" && window.location.protocol === "file:";
-const WS_BASE = isFileProtocol
-  ? "ws://localhost:8000"
-  : `ws://${window.location.host}`;
-
-const WS_URL = `${WS_BASE}/ws/training`;
-
-// Reconnection parameters
-const INITIAL_RETRY_MS = 1000;
-const MAX_RETRY_MS = 30000;
-const BACKOFF_FACTOR = 2;
-
-/**
- * WebSocket message types emitted by the training backend.
- */
 interface ProgressData {
   epoch: number;
   epoch_step: number;
@@ -63,36 +37,16 @@ type WsMessage =
   | { type: "sample_progress"; data: SampleProgressData }
   | { type: "error"; data: ErrorData };
 
-/**
- * Connect to the training WebSocket and dispatch events to the store.
- *
- * Call this hook once at the app root level.  It manages its own
- * lifecycle, reconnecting automatically when the connection drops.
- *
- * @param enabled - Set to `false` to prevent connecting (e.g. when
- *   the backend is not yet available).
- */
 export function useTrainingWebSocket(enabled = true): void {
-  const wsRef = useRef<WebSocket | null>(null);
-  const retryRef = useRef(INITIAL_RETRY_MS);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef = useRef(true);
-
-  // rAF-based throttling: buffer the latest progress message and flush at
-  // ~60fps to avoid excessive re-renders during high-frequency updates.
-  // Only progress messages are throttled; status, sample, and error messages
-  // are applied immediately since they carry important state transitions.
   const progressBufferRef = useRef<ProgressData | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // Pull stable action references from the store (they don't change)
   const setStatus = useTrainingStore((s) => s.setStatus);
   const setProgress = useTrainingStore((s) => s.setProgress);
   const setError = useTrainingStore((s) => s.setError);
   const setStatusText = useTrainingStore((s) => s.setStatusText);
   const addSampleUrl = useTrainingStore((s) => s.addSampleUrl);
 
-  /** Flush the buffered progress data to the store. Called once per animation frame. */
   const flushProgressBuffer = useCallback(() => {
     const data = progressBufferRef.current;
     if (data) {
@@ -112,47 +66,17 @@ export function useTrainingWebSocket(enabled = true): void {
     rafRef.current = null;
   }, [setProgress, setStatus]);
 
-  useEffect(() => {
-    mountedRef.current = true;
+  const handleMessage = useCallback(
+    (event: MessageEvent) => {
+      let msg: WsMessage;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return; // Ignore unparseable messages
+      }
 
-    if (!enabled) return;
-
-    function connect() {
-      if (!mountedRef.current) return;
-
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        retryRef.current = INITIAL_RETRY_MS; // reset backoff on success
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg: WsMessage = JSON.parse(event.data);
-          handleMessage(msg);
-        } catch {
-          // Ignore unparseable messages
-        }
-      };
-
-      ws.onclose = () => {
-        wsRef.current = null;
-        scheduleReconnect();
-      };
-
-      ws.onerror = () => {
-        // onclose will fire after onerror, which triggers reconnect
-        ws.close();
-      };
-    }
-
-    function handleMessage(msg: WsMessage) {
       switch (msg.type) {
         case "progress": {
-          // Buffer progress messages and schedule a rAF flush.
-          // Only the latest progress data matters -- intermediate values
-          // are dropped so the UI never updates faster than the display.
           progressBufferRef.current = msg.data;
           if (rafRef.current === null) {
             rafRef.current = requestAnimationFrame(flushProgressBuffer);
@@ -164,14 +88,12 @@ export function useTrainingWebSocket(enabled = true): void {
           const text = msg.data.text;
           setStatusText(text);
 
-          // Infer training state from status text
           if (text.startsWith("Error")) {
             setStatus("error");
           } else if (text === "Stopped") {
             setStatus("idle");
           } else if (text === "Stopping...") {
             // Don't change status -- training thread is still winding down.
-            // Status will be set to "idle" when "Stopped" arrives.
           } else if (text.startsWith("Starting")) {
             setStatus("preparing");
           }
@@ -181,7 +103,6 @@ export function useTrainingWebSocket(enabled = true): void {
         case "sample": {
           const d = msg.data;
           if (d.data) {
-            // Convert base64 to a data URL for display
             const mimeType =
               d.file_type === "IMAGE"
                 ? "image/png"
@@ -195,8 +116,6 @@ export function useTrainingWebSocket(enabled = true): void {
         }
 
         case "sample_progress": {
-          // Could dispatch to a sampling progress sub-state
-          // For now, update the status text
           setStatusText(
             `Sampling: step ${msg.data.step}/${msg.data.max_step}`,
           );
@@ -209,36 +128,23 @@ export function useTrainingWebSocket(enabled = true): void {
           break;
         }
       }
-    }
+    },
+    [setStatus, setStatusText, setError, addSampleUrl, flushProgressBuffer],
+  );
 
-    function scheduleReconnect() {
-      if (!mountedRef.current) return;
+  useReconnectingWebSocket({
+    path: "/ws/training",
+    onMessage: handleMessage,
+    enabled,
+  });
 
-      retryTimerRef.current = setTimeout(() => {
-        retryRef.current = Math.min(
-          retryRef.current * BACKOFF_FACTOR,
-          MAX_RETRY_MS,
-        );
-        connect();
-      }, retryRef.current);
-    }
-
-    connect();
-
+  useEffect(() => {
     return () => {
-      mountedRef.current = false;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-      }
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
       progressBufferRef.current = null;
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
     };
-  }, [enabled, setStatus, setProgress, setError, setStatusText, addSampleUrl, flushProgressBuffer]);
+  }, []);
 }

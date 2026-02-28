@@ -7,12 +7,18 @@ import {
   type FileFilter,
 } from "electron";
 import { spawn, execSync, type ChildProcess } from "child_process";
+import { randomBytes } from "crypto";
 import * as path from "path";
 import * as fs from "fs";
 import * as http from "http";
 import { IPC_CHANNELS } from "../shared/ipc-channels";
+import {
+  createSplashWindow,
+  updateSplash,
+  showSplashError,
+  closeSplash,
+} from "./splash";
 
-// ── Constants ──────────────────────────────────────────────────────
 const isWindows = process.platform === "win32";
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
@@ -25,19 +31,17 @@ const DEV_SERVER_URL = "http://localhost:5173";
 // they set this env var so Electron doesn't spawn a duplicate.
 const externalBackend = process.env.OT_EXTERNAL_BACKEND === "1";
 
-// ── State ──────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
+const shutdownToken = randomBytes(32).toString("hex");
 // (no isQuitting flag needed — cleanupPromise gates the quit sequence)
 
-// ── Path Resolution ────────────────────────────────────────────────
 // After tsc with rootDir=src, __dirname is web/gui/dist/main/main/
 // Project root is 5 levels up: main -> main -> dist -> gui -> web -> root
 function getProjectRoot(): string {
   return path.resolve(__dirname, "..", "..", "..", "..", "..");
 }
 
-// ── Python Discovery ───────────────────────────────────────────────
 function findPython(): string {
   const projectRoot = getProjectRoot();
 
@@ -65,7 +69,30 @@ function findPython(): string {
   return fallback;
 }
 
-// ── Process Management ─────────────────────────────────────────────
+function runTypeGeneration(pythonPath: string): boolean {
+  const projectRoot = getProjectRoot();
+
+  console.log(`[Electron] Running type generation with: ${pythonPath}`);
+
+  try {
+    execSync(`"${pythonPath}" -m web.scripts.generate_types`, {
+      cwd: projectRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60000,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      windowsHide: true,
+    });
+    console.log("[Electron] Type generation completed successfully");
+    return true;
+  } catch (err) {
+    console.warn(
+      "[Electron] Type generation failed (non-fatal):",
+      (err as Error).message,
+    );
+    return false;
+  }
+}
+
 function killProcessTree(proc: ChildProcess | null): void {
   if (!proc || proc.killed) return;
   try {
@@ -140,7 +167,6 @@ function killStaleBackend(): void {
   }
 }
 
-// ── Backend Spawning ───────────────────────────────────────────────
 function startBackend(): ChildProcess | null {
   if (backendProcess && !backendProcess.killed) {
     killProcessTree(backendProcess);
@@ -169,7 +195,11 @@ function startBackend(): ChildProcess | null {
       {
         cwd: projectRoot,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: "1",
+          OT_SHUTDOWN_TOKEN: shutdownToken,
+        },
         ...(isWindows ? { windowsHide: true } : { detached: true }),
       },
     );
@@ -191,7 +221,11 @@ function startBackend(): ChildProcess | null {
 
     const proc = spawn(cmd, [], {
       cwd: projectRoot,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        OT_SHUTDOWN_TOKEN: shutdownToken,
+      },
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
       ...(isWindows ? { windowsHide: true } : { detached: true }),
@@ -217,7 +251,6 @@ function attachBackendHandlers(proc: ChildProcess): void {
   });
 }
 
-// ── Health Check ───────────────────────────────────────────────────
 function checkHealth(): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(HEALTH_URL, (res) => {
@@ -231,7 +264,9 @@ function checkHealth(): Promise<boolean> {
   });
 }
 
-async function waitForBackend(): Promise<boolean> {
+async function waitForBackend(
+  onProgress?: (attempt: number, maxAttempts: number) => void,
+): Promise<boolean> {
   for (let i = 0; i < MAX_HEALTH_RETRIES; i++) {
     const healthy = await checkHealth();
     if (healthy) {
@@ -241,68 +276,76 @@ async function waitForBackend(): Promise<boolean> {
     console.log(
       `[Electron] Waiting for backend... (${i + 1}/${MAX_HEALTH_RETRIES})`,
     );
+    if (onProgress) onProgress(i + 1, MAX_HEALTH_RETRIES);
     await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL));
   }
   console.error("[Electron] Backend failed to start within timeout");
   return false;
 }
 
-// ── Window ─────────────────────────────────────────────────────────
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 700,
-    title: "OneTrainerWeb",
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+function createWindow(): Promise<BrowserWindow> {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 1400,
+      height: 900,
+      minWidth: 1024,
+      minHeight: 700,
+      title: "OneTrainerWeb",
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    mainWindow = win;
 
-  const isDev = !app.isPackaged;
-  if (isDev) {
-    mainWindow.loadURL(DEV_SERVER_URL);
-    // Only open DevTools when explicitly requested
-    if (process.env.OT_DEVTOOLS === "1") {
-      mainWindow.webContents.openDevTools();
+    const isDev = !app.isPackaged;
+    if (isDev) {
+      win.loadURL(DEV_SERVER_URL);
+      // Only open DevTools when explicitly requested
+      if (process.env.OT_DEVTOOLS === "1") {
+        win.webContents.openDevTools();
+      }
+    } else {
+      win.loadFile(
+        path.join(__dirname, "..", "..", "renderer", "index.html"),
+      );
     }
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, "..", "..", "renderer", "index.html"),
-    );
-  }
 
-  // Navigation guards -- prevent navigating away from the app
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    const parsed = new URL(url);
-    if (parsed.hostname === "localhost") return;
-    event.preventDefault();
-    shell.openExternal(url);
-  });
+    // Navigation guards -- prevent navigating away from the app
+    win.webContents.on("will-navigate", (event, url) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === "localhost") return;
+      event.preventDefault();
+      shell.openExternal(url);
+    });
 
-  // Handle new window requests (target="_blank") -- open in system browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
-  });
+    // Handle new window requests (target="_blank") -- open in system browser
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: "deny" };
+    });
 
-  // Show window when ready
-  mainWindow.once("ready-to-show", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-    }
-  });
+    // Resolve when content is ready (splash handles showing the window)
+    const loadTimeout = setTimeout(() => {
+      console.warn(
+        "[Electron] Main window ready-to-show timeout, resolving anyway",
+      );
+      resolve(win);
+    }, 30000);
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+    win.once("ready-to-show", () => {
+      clearTimeout(loadTimeout);
+      resolve(win);
+    });
+
+    win.on("closed", () => {
+      mainWindow = null;
+    });
   });
 }
 
-// ── IPC Handlers ───────────────────────────────────────────────────
 function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.OPEN_FILE,
@@ -365,7 +408,6 @@ function registerIpcHandlers(): void {
   });
 }
 
-// ── Graceful Shutdown ──────────────────────────────────────────────
 function isProcessAlive(proc: ChildProcess | null): boolean {
   if (!proc || proc.killed || proc.pid === undefined) return false;
   try {
@@ -389,7 +431,10 @@ async function gracefulShutdownBackend(timeoutMs = 8000): Promise<void> {
           port: BACKEND_PORT,
           path: "/api/shutdown",
           method: "POST",
-          headers: { "Content-Length": 0 },
+          headers: {
+            "Content-Length": 0,
+            "x-shutdown-token": shutdownToken,
+          },
         },
         (res) => {
           res.resume();
@@ -440,41 +485,73 @@ function cleanupAndQuit(): Promise<void> {
   return cleanupPromise;
 }
 
-// ── App Lifecycle ──────────────────────────────────────────────────
 async function main(): Promise<void> {
   await app.whenReady();
 
   registerIpcHandlers();
 
-  // Start backend (unless managed externally by run_web.bat / run_web_dev.bat)
+  // Step 0: Show splash immediately
+  createSplashWindow();
+
+  // Step 1: Generate types (non-fatal if fails)
   if (!externalBackend) {
+    updateSplash(1, 2, "Generating types...");
+    const pythonPath = findPython();
+    const generated = runTypeGeneration(pythonPath);
+    updateSplash(1, 5, generated ? "Types generated" : "Using cached types");
+  }
+
+  // Step 2: Start backend
+  if (!externalBackend) {
+    updateSplash(2, 8, "Starting backend server...");
     console.log("[Electron] Starting backend...");
     backendProcess = startBackend();
     if (!backendProcess) {
       console.error("[Electron] Failed to spawn backend process");
-      app.quit();
+      showSplashError("Failed to start backend process");
+      setTimeout(() => app.quit(), 3000);
       return;
     }
+    updateSplash(2, 12, "Backend process started");
   } else {
+    updateSplash(2, 12, "Using external backend...");
     console.log(
       "[Electron] OT_EXTERNAL_BACKEND=1 -- skipping backend spawn",
     );
   }
 
-  // Wait for backend health
+  // Step 3: Wait for backend health
+  updateSplash(3, 15, "Waiting for backend...");
   console.log("[Electron] Waiting for backend to start...");
-  const healthy = await waitForBackend();
+
+  const healthy = await waitForBackend((attempt, maxAttempts) => {
+    const progress = 15 + (attempt / maxAttempts) * 60;
+    updateSplash(
+      3,
+      Math.min(progress, 75),
+      `Health check... (${attempt}/${maxAttempts})`,
+    );
+  });
+
   if (!healthy) {
     console.error("[Electron] Backend failed to start within timeout");
+    showSplashError("Backend failed to start (60s timeout)");
     if (!externalBackend) {
       killProcessTree(backendProcess);
     }
-    app.quit();
+    setTimeout(() => app.quit(), 5000);
     return;
   }
-  console.log("[Electron] Backend is healthy");
 
-  createWindow();
+  console.log("[Electron] Backend is healthy");
+  updateSplash(4, 80, "Loading interface...");
+
+  // Step 4: Create main window and wait for ready
+  const window = await createWindow();
+  updateSplash(5, 95, "Almost ready...");
+
+  // Step 5: Transition splash → main window
+  await closeSplash(window);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

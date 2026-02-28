@@ -440,6 +440,17 @@ export const OptimizerValues: Optimizer[] = [
   'YOGI',
 ];
 
+export type PathIOType =
+  | 'INPUT'
+  | 'OUTPUT'
+  | 'MODEL';
+
+export const PathIOTypeValues: PathIOType[] = [
+  'INPUT',
+  'OUTPUT',
+  'MODEL',
+];
+
 export type PeftType =
   | 'LORA'
   | 'LOHA'

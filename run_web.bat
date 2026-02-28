@@ -7,7 +7,7 @@ echo.
 REM Kill any stale backend from a previous session on port 8000
 call :kill_stale_port 8000
 
-REM ── Verify venv ──────────────────────────────────────────────────
+REM Verify venv
 if not exist "venv\Scripts\activate.bat" (
     echo ERROR: Virtual environment not found at venv\
     echo Run install.bat first to create the virtual environment.
@@ -16,7 +16,7 @@ if not exist "venv\Scripts\activate.bat" (
     exit /b 1
 )
 
-REM ── Verify node_modules ──────────────────────────────────────────
+REM Verify node_modules
 if not exist "web\gui\node_modules" (
     echo ERROR: Node modules not found at web\gui\node_modules
     echo Run: cd web\gui ^&^& npm install
@@ -25,7 +25,7 @@ if not exist "web\gui\node_modules" (
     exit /b 1
 )
 
-REM ── Build Electron main process (TypeScript) ─────────────────────
+REM Build Electron main process
 echo Compiling Electron main process...
 cd web\gui
 call npx tsc -p tsconfig.main.json
@@ -37,7 +37,7 @@ if errorlevel 1 (
 )
 cd ..\..
 
-REM ── Run everything in a single terminal via concurrently ─────────
+REM Run everything via concurrently
 echo Starting all services in one terminal...
 echo.
 echo   Backend:   http://localhost:8000  (FastAPI)

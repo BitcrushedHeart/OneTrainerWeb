@@ -1,19 +1,4 @@
-"""
-Type generation script for OneTrainerWeb.
-
-Introspects Python BaseConfig classes and enums to generate TypeScript types.
-Requires the full OneTrainer Python environment (torch, diffusers, etc.)
-because BaseConfig stores metadata in runtime dicts populated during __init__.
-
-Usage:
-    python web/scripts/generate_types.py
-
-Output (committed to repo):
-    web/gui/src/renderer/types/generated/enums.ts
-    web/gui/src/renderer/types/generated/config.ts
-    web/gui/src/renderer/types/generated/metadata.ts
-"""
-
+import ast
 import importlib
 import inspect
 import json
@@ -22,68 +7,84 @@ import sys
 from enum import Enum
 from typing import Any, get_args, get_origin
 
-# Add project root to path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
 from modules.util.config.BaseConfig import BaseConfig
 from modules.util.type_util import issubclass_safe
 
-# Output directory
+_incomplete_generation = False
+
 OUTPUT_DIR = os.path.join(
     PROJECT_ROOT, "web", "gui", "src", "renderer", "types", "generated"
 )
 
-# All enum modules to introspect
-ENUM_MODULES = [
-    "modules.util.enum.AudioFormat",
-    "modules.util.enum.BalancingStrategy",
-    "modules.util.enum.CloudAction",
-    "modules.util.enum.CloudFileSync",
-    "modules.util.enum.CloudType",
-    "modules.util.enum.ConceptType",
-    "modules.util.enum.ConfigPart",
-    "modules.util.enum.DataType",
-    "modules.util.enum.EMAMode",
-    "modules.util.enum.FileType",
-    "modules.util.enum.GenerateCaptionsModel",
-    "modules.util.enum.GenerateMasksModel",
-    "modules.util.enum.GradientCheckpointingMethod",
-    "modules.util.enum.GradientReducePrecision",
-    "modules.util.enum.ImageFormat",
-    "modules.util.enum.LearningRateScaler",
-    "modules.util.enum.LearningRateScheduler",
-    "modules.util.enum.LossScaler",
-    "modules.util.enum.LossWeight",
-    "modules.util.enum.ModelFormat",
-    "modules.util.enum.ModelType",
-    "modules.util.enum.NoiseScheduler",
-    "modules.util.enum.Optimizer",
-    "modules.util.enum.TimestepDistribution",
-    "modules.util.enum.TimeUnit",
-    "modules.util.enum.TrainingMethod",
-    "modules.util.enum.VideoFormat",
-]
+ENUM_DIR = os.path.join(PROJECT_ROOT, "modules", "util", "enum")
+CONFIG_DIR = os.path.join(PROJECT_ROOT, "modules", "util", "config")
 
-# Config classes to generate interfaces for
-CONFIG_IMPORTS = [
-    ("modules.util.config.TrainConfig", "TrainConfig"),
-    ("modules.util.config.TrainConfig", "TrainOptimizerConfig"),
-    ("modules.util.config.TrainConfig", "TrainModelPartConfig"),
-    ("modules.util.config.TrainConfig", "TrainEmbeddingConfig"),
-    ("modules.util.config.TrainConfig", "QuantizationConfig"),
-    ("modules.util.config.ConceptConfig", "ConceptConfig"),
-    ("modules.util.config.ConceptConfig", "ConceptImageConfig"),
-    ("modules.util.config.ConceptConfig", "ConceptTextConfig"),
-    ("modules.util.config.SampleConfig", "SampleConfig"),
-    ("modules.util.config.CloudConfig", "CloudConfig"),
-    ("modules.util.config.CloudConfig", "CloudSecretsConfig"),
-    ("modules.util.config.SecretsConfig", "SecretsConfig"),
-]
+_KNOWN_ENUM_MODULES = {
+    "modules.util.enum.AudioFormat",
+    "modules.util.enum.DataType",
+    "modules.util.enum.ModelType",
+    "modules.util.enum.Optimizer",
+    "modules.util.enum.TrainingMethod",
+}
+
+_KNOWN_CONFIG_CLASSES = {
+    "TrainConfig", "TrainOptimizerConfig", "TrainModelPartConfig",
+    "TrainEmbeddingConfig", "QuantizationConfig", "ConceptConfig",
+    "ConceptImageConfig", "ConceptTextConfig", "SampleConfig",
+    "CloudConfig", "CloudSecretsConfig", "SecretsConfig",
+}
+
+
+def discover_enum_modules() -> list[str]:
+    """Scan modules/util/enum/ for Python files containing Enum subclasses."""
+    modules = []
+    for filename in sorted(os.listdir(ENUM_DIR)):
+        if filename.startswith("_") or not filename.endswith(".py"):
+            continue
+        module_name = filename[:-3]
+        module_path = f"modules.util.enum.{module_name}"
+        modules.append(module_path)
+    return modules
+
+
+def discover_config_classes() -> list[tuple[str, type]]:
+    """Scan modules/util/config/ for BaseConfig subclasses with default_values()."""
+    configs = []
+    seen = set()
+    for filename in sorted(os.listdir(CONFIG_DIR)):
+        if filename.startswith("_") or not filename.endswith(".py"):
+            continue
+        module_name = filename[:-3]
+        module_path = f"modules.util.config.{module_name}"
+        try:
+            mod = importlib.import_module(module_path)
+        except Exception:
+            continue
+        for attr_name in dir(mod):
+            obj = getattr(mod, attr_name)
+            if (
+                isinstance(obj, type)
+                and issubclass_safe(obj, BaseConfig)
+                and obj is not BaseConfig
+                and hasattr(obj, "default_values")
+                and attr_name not in seen
+            ):
+                seen.add(attr_name)
+                configs.append((attr_name, obj))
+    return configs
+
+
+ENUM_MODULES = discover_enum_modules()
+
+_missing_enums = _KNOWN_ENUM_MODULES - set(ENUM_MODULES)
+if _missing_enums:
+    raise RuntimeError(f"Dynamic enum scan missed known modules: {_missing_enums}")
 
 
 def collect_enums() -> list[tuple[str, type]]:
-    """Import all enum modules and collect enum classes."""
     enums = []
     for module_path in ENUM_MODULES:
         mod = importlib.import_module(module_path)
@@ -94,21 +95,15 @@ def collect_enums() -> list[tuple[str, type]]:
 
 
 def collect_configs() -> list[tuple[str, type]]:
-    """Import all config classes."""
-    configs = []
-    seen = set()
-    for module_path, class_name in CONFIG_IMPORTS:
-        if class_name in seen:
-            continue
-        seen.add(class_name)
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, class_name)
-        configs.append((class_name, cls))
+    configs = discover_config_classes()
+    found_names = {name for name, _ in configs}
+    missing = _KNOWN_CONFIG_CLASSES - found_names
+    if missing:
+        raise RuntimeError(f"Dynamic config scan missed known classes: {missing}")
     return configs
 
 
 def python_type_to_ts(py_type: type, nullable: bool, enum_names: set[str]) -> str:
-    """Convert a Python type annotation to a TypeScript type string."""
     if py_type is str:
         ts = "string"
     elif py_type is bool:
@@ -117,17 +112,13 @@ def python_type_to_ts(py_type: type, nullable: bool, enum_names: set[str]) -> st
         ts = "number"
     elif py_type is dict:
         ts = "Record<string, unknown>"
-    elif issubclass_safe(py_type, Enum):
-        ts = py_type.__name__
-    elif issubclass_safe(py_type, BaseConfig):
+    elif issubclass_safe(py_type, Enum) or issubclass_safe(py_type, BaseConfig):
         ts = py_type.__name__
     elif py_type is list or get_origin(py_type) is list:
         args = get_args(py_type)
         if args:
             inner = args[0]
-            if issubclass_safe(inner, BaseConfig):
-                ts = f"{inner.__name__}[]"
-            elif issubclass_safe(inner, Enum):
+            if issubclass_safe(inner, BaseConfig) or issubclass_safe(inner, Enum):
                 ts = f"{inner.__name__}[]"
             elif inner is str:
                 ts = "string[]"
@@ -165,7 +156,6 @@ def python_type_to_ts(py_type: type, nullable: bool, enum_names: set[str]) -> st
 
 
 def generate_enums_ts(enums: list[tuple[str, type]]) -> str:
-    """Generate enums.ts content."""
     lines = [
         "// Auto-generated by web/scripts/generate_types.py",
         "// Do not edit manually. Regenerate when backend enums change.",
@@ -173,17 +163,15 @@ def generate_enums_ts(enums: list[tuple[str, type]]) -> str:
     ]
 
     for name, enum_cls in sorted(enums, key=lambda x: x[0]):
-        members = [m for m in enum_cls]
+        members = list(enum_cls)
         lines.append(f"export type {name} =")
         for i, member in enumerate(members):
             separator = ";" if i == len(members) - 1 else ""
             lines.append(f"  | '{member.value}'{separator}")
         lines.append("")
 
-        # Also export a const array of all values for dropdowns
         lines.append(f"export const {name}Values: {name}[] = [")
-        for member in members:
-            lines.append(f"  '{member.value}',")
+        lines.extend(f"  '{member.value}'," for member in members)
         lines.append("];")
         lines.append("")
 
@@ -193,7 +181,6 @@ def generate_enums_ts(enums: list[tuple[str, type]]) -> str:
 def generate_config_ts(
     configs: list[tuple[str, type]], enum_names: set[str]
 ) -> str:
-    """Generate config.ts content with TypeScript interfaces."""
     lines = [
         "// Auto-generated by web/scripts/generate_types.py",
         "// Do not edit manually. Regenerate when backend config classes change.",
@@ -201,11 +188,10 @@ def generate_config_ts(
         "import type {",
     ]
 
-    # Import all enum types that are used
     used_enums = set()
-    for class_name, cls in configs:
+    for _class_name, cls in configs:
         instance = cls.default_values()
-        for field_name, field_type in instance.types.items():
+        for field_type in instance.types.values():
             if issubclass_safe(field_type, Enum):
                 used_enums.add(field_type.__name__)
             elif get_origin(field_type) is list:
@@ -219,12 +205,10 @@ def generate_config_ts(
                         if issubclass_safe(arg, Enum):
                             used_enums.add(arg.__name__)
 
-    for enum_name in sorted(used_enums):
-        lines.append(f"  {enum_name},")
+    lines.extend(f"  {enum_name}," for enum_name in sorted(used_enums))
     lines.append("} from './enums';")
     lines.append("")
 
-    # Generate interfaces in dependency order
     generated = set()
 
     def generate_interface(class_name: str, cls: type):
@@ -234,9 +218,8 @@ def generate_config_ts(
 
         result_lines = []
 
-        # First generate any nested BaseConfig dependencies
         instance = cls.default_values()
-        for field_name, field_type in instance.types.items():
+        for field_type in instance.types.values():
             if issubclass_safe(field_type, BaseConfig) and field_type.__name__ not in generated:
                 # Find the class in our configs list
                 for cn, cc in configs:
@@ -289,7 +272,6 @@ def generate_config_ts(
 def generate_metadata_ts(
     configs: list[tuple[str, type]], enum_names: set[str]
 ) -> str:
-    """Generate metadata.ts with field metadata for form validation."""
     lines = [
         "// Auto-generated by web/scripts/generate_types.py",
         "// Do not edit manually. Regenerate when backend config classes change.",
@@ -315,7 +297,6 @@ def generate_metadata_ts(
             nullable = instance.nullables.get(field_name, False)
             default_value = instance.default_values.get(field_name)
 
-            # Determine meta type
             if field_type is str:
                 meta_type = "string"
                 enum_type = None
@@ -355,7 +336,6 @@ def generate_metadata_ts(
                 enum_type = None
                 config_type = None
 
-            # Serialize default value
             if default_value is None:
                 default_json = "null"
             elif isinstance(default_value, bool):
@@ -394,6 +374,494 @@ def generate_metadata_ts(
     return "\n".join(lines)
 
 
+def _safe_call_method(obj: object, method_name: str) -> bool:
+    try:
+        return bool(getattr(obj, method_name)())
+    except TypeError:
+        return False
+
+
+def generate_model_type_info_ts(enums: list[tuple[str, type]]) -> str:
+    from modules.util.enum.ModelType import ModelType
+    from modules.util.enum.TrainingMethod import TrainingMethod
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Do not edit manually. Regenerate when backend ModelType or TopBar logic changes.",
+        "",
+        "import type { ModelType, TrainingMethod } from './enums';",
+        "",
+    ]
+
+    # inspect.getmembers doesn't find these due to Enum metaclass; use __dict__
+    group_methods = []
+    for name, obj in ModelType.__dict__.items():
+        if name.startswith(("is_", "has_")) and callable(obj):
+            group_methods.append(name)
+    group_methods.sort()
+
+    lines.append("/** Model type groupings derived from ModelType.is_*() / has_*() methods. */")
+    lines.append("export const MODEL_TYPE_GROUPS: Record<string, ModelType[]> = {")
+    for method_name in group_methods:
+        members_in_group = [
+            mt.value for mt in ModelType if _safe_call_method(mt, method_name)
+        ]
+        if members_in_group:
+            members_str = ", ".join(f'"{m}"' for m in members_in_group)
+            lines.append(f"  {method_name}: [{members_str}],")
+    lines.append("};")
+    lines.append("")
+
+    lines.append("/** Reverse lookup: for any ModelType, which groups it belongs to. */")
+    lines.append("export const MODEL_TYPE_FLAGS: Record<ModelType, string[]> = {")
+    for mt in ModelType:
+        flags = [
+            method_name for method_name in group_methods
+            if _safe_call_method(mt, method_name)
+        ]
+        flags_str = ", ".join(f'"{f}"' for f in flags)
+        lines.append(f'  "{mt.value}": [{flags_str}],')
+    lines.append("};")
+    lines.append("")
+
+    lines.append("/** Allowed training methods per model type (from TopBar.py). */")
+    lines.append("export const TRAINING_METHODS_BY_MODEL: Record<ModelType, TrainingMethod[]> = {")
+    for mt in ModelType:
+        if mt.is_stable_diffusion():
+            methods = [TrainingMethod.FINE_TUNE, TrainingMethod.LORA, TrainingMethod.EMBEDDING, TrainingMethod.FINE_TUNE_VAE]
+        elif (mt.is_stable_diffusion_3() or mt.is_stable_diffusion_xl() or mt.is_wuerstchen()
+              or mt.is_pixart() or mt.is_flux_1() or mt.is_sana()
+              or mt.is_hunyuan_video() or mt.is_hi_dream() or mt.is_chroma()):
+            methods = [TrainingMethod.FINE_TUNE, TrainingMethod.LORA, TrainingMethod.EMBEDDING]
+        elif mt.is_qwen() or mt.is_z_image() or mt.is_flux_2():
+            methods = [TrainingMethod.FINE_TUNE, TrainingMethod.LORA]
+        else:
+            # Fallback: 3 methods
+            methods = [TrainingMethod.FINE_TUNE, TrainingMethod.LORA, TrainingMethod.EMBEDDING]
+        methods_str = ", ".join(f'"{m.value}"' for m in methods)
+        lines.append(f'  "{mt.value}": [{methods_str}],')
+    lines.append("};")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_optimizer_info_ts(enums: list[tuple[str, type]]) -> str:
+    from modules.util.enum.Optimizer import Optimizer
+
+    # optimizer_util has a circular import (optimizer_util → create → modelSetup → optimizer_util).
+    # Extract the defaults dict from source without importing the module.
+    global _incomplete_generation
+    try:
+        OPTIMIZER_DEFAULT_PARAMETERS = _extract_optimizer_defaults()
+    except Exception as e:
+        print(f"  WARNING: Could not extract OPTIMIZER_DEFAULT_PARAMETERS ({e})")
+        print("  Optimizer defaults will be empty.")
+        print("  Run from the OneTrainer venv for complete output: python -m web.scripts.generate_types")
+        OPTIMIZER_DEFAULT_PARAMETERS = {}
+        _incomplete_generation = True
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Do not edit manually. Regenerate when backend optimizer definitions change.",
+        "",
+        "import type { Optimizer } from './enums';",
+        "",
+    ]
+
+    adaptive = [opt for opt in Optimizer if opt.is_adaptive]
+    schedule_free = [opt for opt in Optimizer if opt.is_schedule_free]
+    fused_back_pass = [opt for opt in Optimizer if opt.supports_fused_back_pass()]
+
+    def opt_array(name: str, description: str, opts: list) -> None:
+        lines.append(f"/** {description} */")
+        lines.append(f"export const {name}: Optimizer[] = [")
+        lines.extend(f'  "{opt.value}",' for opt in opts)
+        lines.append("];")
+        lines.append("")
+
+    opt_array("ADAPTIVE_OPTIMIZERS", "Optimizers with adaptive learning rates.", adaptive)
+    opt_array("SCHEDULE_FREE_OPTIMIZERS", "Schedule-free optimizers.", schedule_free)
+    opt_array("FUSED_BACK_PASS_OPTIMIZERS", "Optimizers that support fused backward pass.", fused_back_pass)
+
+    lines.append("/** Per-optimizer boolean property flags. */")
+    lines.append("export const OPTIMIZER_FLAGS: Record<Optimizer, {")
+    lines.append("  isAdaptive: boolean;")
+    lines.append("  isScheduleFree: boolean;")
+    lines.append("  supportsFusedBackPass: boolean;")
+    lines.append("}> = {")
+    for opt in Optimizer:
+        a = "true" if opt.is_adaptive else "false"
+        sf = "true" if opt.is_schedule_free else "false"
+        fb = "true" if opt.supports_fused_back_pass() else "false"
+        lines.append(f'  "{opt.value}": {{ isAdaptive: {a}, isScheduleFree: {sf}, supportsFusedBackPass: {fb} }},')
+    lines.append("};")
+    lines.append("")
+
+    def serialize_value(v: Any) -> str:
+        if v is None:
+            return "null"
+        elif isinstance(v, bool):
+            return "true" if v else "false"
+        elif isinstance(v, (int, float)):
+            if v == float("inf"):
+                return "Infinity"
+            elif v == float("-inf"):
+                return "-Infinity"
+            return json.dumps(v)
+        elif isinstance(v, str):
+            return json.dumps(v)
+        elif isinstance(v, dict):
+            if not v:
+                return "{}"
+            pairs = ", ".join(f"{json.dumps(str(k))}: {serialize_value(vv)}" for k, vv in v.items())
+            return f"{{ {pairs} }}"
+        elif isinstance(v, list):
+            if not v:
+                return "[]"
+            items = ", ".join(serialize_value(item) for item in v)
+            return f"[{items}]"
+        elif isinstance(v, Enum):
+            return json.dumps(str(v))
+        else:
+            return json.dumps(str(v))
+
+    lines.append("/** Default parameter values per optimizer (from optimizer_util.py). */")
+    lines.append("// eslint-disable-next-line @typescript-eslint/no-explicit-any")
+    lines.append("export const OPTIMIZER_DEFAULTS: Record<Optimizer, Record<string, any>> = {")
+    for opt in Optimizer:
+        defaults = OPTIMIZER_DEFAULT_PARAMETERS.get(opt, {})
+        if not defaults:
+            lines.append(f'  "{opt.value}": {{}},')
+            continue
+        lines.append(f'  "{opt.value}": {{')
+        for key, val in defaults.items():
+            lines.append(f"    {json.dumps(key)}: {serialize_value(val)},")
+        lines.append("  },")
+    lines.append("};")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _extract_dict_from_source(source: str, variable_name: str) -> dict:
+    try:
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == variable_name:
+                        # Extract the source text for the value and evaluate it safely
+                        value_source = ast.get_source_segment(source, node.value)
+                        if value_source:
+                            return ast.literal_eval(value_source)
+        return {}
+    except (SyntaxError, ValueError) as e:
+        print(f"  WARNING: Could not parse {variable_name}: {e}")
+        return {}
+
+
+def _extract_optimizer_defaults() -> dict:
+    """AST-based extraction to avoid circular import in optimizer_util."""
+    from modules.util.enum.Optimizer import Optimizer
+
+    source_path = os.path.join(PROJECT_ROOT, "modules", "util", "optimizer_util.py")
+    with open(source_path, "r", encoding="utf-8") as f:
+        source = f.read()
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        print(f"  WARNING: Could not parse optimizer_util.py: {e}")
+        return {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "OPTIMIZER_DEFAULT_PARAMETERS":
+                    if not isinstance(node.value, ast.Dict):
+                        continue
+                    result = {}
+                    for key_node, val_node in zip(node.value.keys, node.value.values, strict=False):
+                        if isinstance(key_node, ast.Attribute) and isinstance(key_node.value, ast.Name):
+                            if key_node.value.id == "Optimizer":
+                                try:
+                                    opt_member = Optimizer[key_node.attr]
+                                except KeyError:
+                                    continue
+                                val_source = ast.get_source_segment(source, val_node)
+                                if val_source:
+                                    try:
+                                        val = ast.literal_eval(val_source)
+                                    except (ValueError, SyntaxError):
+                                        val = {}
+                                else:
+                                    val = {}
+                                result[opt_member] = val
+                    return result
+
+    print("  WARNING: Could not find OPTIMIZER_DEFAULT_PARAMETERS in optimizer_util.py")
+    return {}
+
+
+def generate_optimizer_defaults_json(enums: list[tuple[str, type]]) -> str:
+    from modules.util.enum.Optimizer import Optimizer
+
+    global _incomplete_generation
+    try:
+        OPTIMIZER_DEFAULT_PARAMETERS = _extract_optimizer_defaults()
+    except Exception as e:
+        print(f"  WARNING: Could not extract OPTIMIZER_DEFAULT_PARAMETERS ({e})")
+        OPTIMIZER_DEFAULT_PARAMETERS = {}
+        _incomplete_generation = True
+
+    def clean_value(v: Any) -> Any:
+        if v is None:
+            return None
+        elif isinstance(v, bool):
+            return v
+        elif isinstance(v, (int, float)):
+            if v == float("inf"):
+                return "Infinity"
+            elif v == float("-inf"):
+                return "-Infinity"
+            return v
+        elif isinstance(v, str):
+            return v
+        elif isinstance(v, dict):
+            return {str(k): clean_value(vv) for k, vv in v.items()}
+        elif isinstance(v, list):
+            return [clean_value(item) for item in v]
+        elif isinstance(v, Enum):
+            return str(v)
+        else:
+            return str(v)
+
+    result: dict[str, dict] = {}
+    for opt in Optimizer:
+        defaults = OPTIMIZER_DEFAULT_PARAMETERS.get(opt, {})
+        result[str(opt)] = {str(k): clean_value(v) for k, v in defaults.items()}
+
+    return json.dumps(result, indent=2)
+
+
+def _extract_key_detail_map() -> dict:
+    """AST-based extraction to avoid importing tkinter-dependent UI module."""
+    source_path = os.path.join(PROJECT_ROOT, "modules", "ui", "OptimizerParamsWindow.py")
+    with open(source_path, "r", encoding="utf-8") as f:
+        source = f.read()
+
+    return _extract_dict_from_source(source, "KEY_DETAIL_MAP")
+
+
+def generate_optimizer_key_details_json() -> str:
+    key_detail_map = _extract_key_detail_map()
+    return json.dumps(key_detail_map, indent=2)
+
+
+def generate_optimizer_key_details_ts() -> str:
+    key_detail_map = _extract_key_detail_map()
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Source: modules/ui/OptimizerParamsWindow.py KEY_DETAIL_MAP",
+        "// Do not edit manually.",
+        "",
+        "export interface OptimizerKeyDetail {",
+        "  title: string;",
+        "  tooltip: string;",
+        "  type: \"bool\" | \"float\" | \"int\" | \"str\" | \"dict\";",
+        "}",
+        "",
+        "export const OPTIMIZER_KEY_DETAILS: Record<string, OptimizerKeyDetail> = {",
+    ]
+
+    for key in sorted(key_detail_map.keys()):
+        detail = key_detail_map[key]
+        title = json.dumps(detail["title"])
+        tooltip = json.dumps(detail["tooltip"])
+        detail_type = json.dumps(detail["type"])
+        lines.append(f"  {json.dumps(key)}: {{ title: {title}, tooltip: {tooltip}, type: {detail_type} }},")
+
+    lines.append("};")
+    lines.append("")
+    return "\n".join(lines)
+
+
+_ACRONYMS = {
+    "SDXL", "VAE", "LORA", "GAN", "FP16", "FP32", "BF16", "NF4",
+    "CPU", "GPU", "TPU", "EMA", "LR", "GGUF", "BNBFP4", "BNBNF4",
+    "RGB", "RGBA", "HDR", "SRT", "JSON", "CSV", "MP3", "MP4", "FLAC",
+    "WAV", "OGG", "AVI", "MKV", "WEBM", "GIF", "PNG", "JPG", "JPEG",
+    "WEBP", "BMP", "TIFF",
+}
+
+_SPECIAL_LABELS = {
+    "ADAMW": "AdamW",
+    "LORA": "LoRA",
+    "ADAFACTOR": "Adafactor",
+}
+
+_VERSION_SUFFIXES = {"15": "1.5", "20": "2.0", "21": "2.1", "30": "3.0", "35": "3.5"}
+
+
+def _auto_label(value: str) -> str:
+    """Generate a display label from an enum value string."""
+    if value in _SPECIAL_LABELS:
+        return _SPECIAL_LABELS[value]
+
+    parts = value.split("_")
+    result = []
+    for part in parts:
+        if part in _ACRONYMS:
+            result.append(part)
+        elif part in _VERSION_SUFFIXES:
+            result.append(_VERSION_SUFFIXES[part])
+        elif part.isdigit():
+            result.append(part)
+        else:
+            result.append(part.capitalize())
+    return " ".join(result)
+
+
+def _auto_tooltip(field_path: str) -> str:
+    """Generate a tooltip from a dot-notation field path."""
+    readable = field_path.replace(".", " ").replace("_", " ")
+    return readable[:1].upper() + readable[1:] if readable else ""
+
+
+def generate_enum_labels_ts(enums: list[tuple[str, type]]) -> str:
+    from web.scripts.ui_metadata import ENUM_DISPLAY_LABELS
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Do not edit manually. Update labels in web/scripts/ui_metadata.py.",
+        "",
+    ]
+
+    # Build flat label map: curated overrides take precedence over auto-labels
+    flat_labels: dict[str, str] = {}
+    for enum_name, enum_cls in enums:
+        overrides = ENUM_DISPLAY_LABELS.get(enum_name, {})
+        for member in enum_cls:
+            flat_labels[member.value] = overrides.get(member.value, _auto_label(member.value))
+
+    lines.append("const labels: Record<string, string> = {")
+    lines.extend(
+        f"  {json.dumps(value)}: {json.dumps(flat_labels[value])},"
+        for value in sorted(flat_labels.keys())
+    )
+    lines.append("};")
+    lines.append("")
+
+    lines.append("function formatFallback(value: string): string {")
+    lines.append("  return value")
+    lines.append('    .replace(/_/g, " ")')
+    lines.append('    .replace(/\\b([A-Za-z])([A-Za-z]*)\\b/g, (_match, first: string, rest: string) =>')
+    lines.append("      first.toUpperCase() + rest.toLowerCase(),")
+    lines.append("    );")
+    lines.append("}")
+    lines.append("")
+
+    lines.append("/**")
+    lines.append(" * Returns a human-friendly display label for any enum value string.")
+    lines.append(" * Looks up the value in a curated map. Falls back to title-casing.")
+    lines.append(" */")
+    lines.append("export function enumLabel(value: string): string {")
+    lines.append("  return labels[value] ?? formatFallback(value);")
+    lines.append("}")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_data_type_subsets_ts() -> str:
+    from web.scripts.ui_metadata import DTYPE_SUBSETS
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Do not edit manually. Update subsets in web/scripts/ui_metadata.py.",
+        "",
+        "import type { DataType } from './enums';",
+        "",
+        "export interface DTypeOption {",
+        "  label: string;",
+        "  value: DataType;",
+        "}",
+        "",
+    ]
+
+    lines.append("export const DTYPE_SUBSETS: Record<string, DTypeOption[]> = {")
+    for subset_name, options in DTYPE_SUBSETS.items():
+        lines.append(f"  {subset_name}: [")
+        for label, value in options:
+            lines.append(f"    {{ label: {json.dumps(label)}, value: {json.dumps(value)} }},")
+        lines.append("  ],")
+    lines.append("};")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_tooltips_ts(configs: list[tuple[str, type]]) -> str:
+    from web.scripts.ui_metadata import FIELD_TOOLTIPS, WIDE_TOOLTIPS
+
+    lines = [
+        "// Auto-generated by web/scripts/generate_types.py",
+        "// Do not edit manually. Update tooltips in web/scripts/ui_metadata.py.",
+        "",
+    ]
+
+    # Merge curated tooltips with auto-generated fallbacks for all config fields
+    all_tooltips: dict[str, str] = {}
+
+    # Seed with curated tooltips (always take precedence)
+    all_tooltips.update(FIELD_TOOLTIPS)
+
+    # Add auto-generated tooltips for any config field not already covered
+    for _class_name, cls in configs:
+        try:
+            inst = cls.default_values()
+            for field_name in inst.to_dict():
+                if field_name.startswith("__"):
+                    continue
+                if field_name not in all_tooltips:
+                    auto = _auto_tooltip(field_name)
+                    if auto:
+                        all_tooltips[field_name] = auto
+        except Exception:
+            continue
+
+    lines.append("/** Tooltip text for config fields, keyed by dot-notation field path. */")
+    lines.append("export const FIELD_TOOLTIPS: Record<string, string> = {")
+    for key in sorted(all_tooltips.keys()):
+        tooltip = all_tooltips[key]
+        lines.append(f"  {json.dumps(key)}: {json.dumps(tooltip)},")
+    lines.append("};")
+    lines.append("")
+
+    lines.append("/** Field keys that require wide tooltip display. */")
+    lines.append("export const WIDE_TOOLTIP_KEYS: Set<string> = new Set([")
+    lines.extend(f"  {json.dumps(key)}," for key in sorted(WIDE_TOOLTIPS))
+    lines.append("]);")
+    lines.append("")
+
+    lines.append("/** Get tooltip text for a config field key. Returns undefined if not found. */")
+    lines.append("export function getTooltip(fieldKey: string): string | undefined {")
+    lines.append("  return FIELD_TOOLTIPS[fieldKey];")
+    lines.append("}")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def write_file(filename: str, content: str) -> str:
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    with open(filepath, "w", encoding="utf-8", newline="\n") as f:
+        f.write(content)
+    return filepath
+
+
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -407,41 +875,82 @@ def main():
 
     enum_names = {name for name, _ in enums}
 
-    # Generate enums.ts
     print("Generating enums.ts...")
-    enums_content = generate_enums_ts(enums)
-    enums_path = os.path.join(OUTPUT_DIR, "enums.ts")
-    with open(enums_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(enums_content)
-    print(f"  Wrote {enums_path}")
+    print(f"  Wrote {write_file('enums.ts', generate_enums_ts(enums))}")
 
-    # Generate config.ts
     print("Generating config.ts...")
-    config_content = generate_config_ts(configs, enum_names)
-    config_path = os.path.join(OUTPUT_DIR, "config.ts")
-    with open(config_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(config_content)
-    print(f"  Wrote {config_path}")
+    print(f"  Wrote {write_file('config.ts', generate_config_ts(configs, enum_names))}")
 
-    # Generate metadata.ts
     print("Generating metadata.ts...")
-    metadata_content = generate_metadata_ts(configs, enum_names)
-    metadata_path = os.path.join(OUTPUT_DIR, "metadata.ts")
-    with open(metadata_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(metadata_content)
-    print(f"  Wrote {metadata_path}")
+    print(f"  Wrote {write_file('metadata.ts', generate_metadata_ts(configs, enum_names))}")
 
-    # Print summary statistics
+    new_generators = [
+        ("modelTypeInfo.ts", lambda: generate_model_type_info_ts(enums)),
+        ("optimizerInfo.ts", lambda: generate_optimizer_info_ts(enums)),
+        ("optimizerKeyDetails.ts", lambda: generate_optimizer_key_details_ts()),
+        ("enumLabels.ts", lambda: generate_enum_labels_ts(enums)),
+        ("dataTypeSubsets.ts", lambda: generate_data_type_subsets_ts()),
+        ("tooltips.ts", lambda: generate_tooltips_ts(configs)),
+    ]
+
+    global _incomplete_generation
+    for filename, generator in new_generators:
+        print(f"Generating {filename}...")
+        try:
+            print(f"  Wrote {write_file(filename, generator())}")
+        except Exception as e:
+            print(f"  ERROR generating {filename}: {e}")
+            import traceback
+            traceback.print_exc()
+            _incomplete_generation = True
+
+    backend_generated_dir = os.path.join(PROJECT_ROOT, "web", "backend", "generated")
+    os.makedirs(backend_generated_dir, exist_ok=True)
+
+    print("Generating optimizer_defaults.json (backend)...")
+    try:
+        json_content = generate_optimizer_defaults_json(enums)
+        json_path = os.path.join(backend_generated_dir, "optimizer_defaults.json")
+        with open(json_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json_content)
+        print(f"  Wrote {json_path}")
+    except Exception as e:
+        print(f"  ERROR generating optimizer_defaults.json: {e}")
+        import traceback
+        traceback.print_exc()
+        _incomplete_generation = True
+
+    print("Generating optimizer_key_details.json (backend)...")
+    try:
+        json_content = generate_optimizer_key_details_json()
+        json_path = os.path.join(backend_generated_dir, "optimizer_key_details.json")
+        with open(json_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json_content)
+        print(f"  Wrote {json_path}")
+    except Exception as e:
+        print(f"  ERROR generating optimizer_key_details.json: {e}")
+        import traceback
+        traceback.print_exc()
+        _incomplete_generation = True
+
     total_enum_values = sum(len(list(cls)) for _, cls in enums)
     total_config_fields = 0
-    for class_name, cls in configs:
+    for _class_name, cls in configs:
         instance = cls.default_values()
         total_config_fields += len(instance.types)
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  {len(enums)} enum types with {total_enum_values} total values")
     print(f"  {len(configs)} config interfaces with {total_config_fields} total fields")
-    print("Done!")
+    print("  9 generated TypeScript files")
+
+    if _incomplete_generation:
+        print("\nWARNING: Some files were not generated successfully.")
+        print("Check the errors above and fix the underlying issues.")
+        print("Re-run from the OneTrainer venv: python -m web.scripts.generate_types")
+        sys.exit(1)
+    else:
+        print("Done!")
 
 
 if __name__ == "__main__":

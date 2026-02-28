@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { ModalBase } from "./ModalBase";
 import { FormEntry, Toggle, Button } from "@/components/shared";
 import { useConfigField } from "@/hooks/useConfigField";
 import { useConfigStore } from "@/store/configStore";
+import { configApi } from "@/api/configApi";
+import type { OptimizerParamsResponse, OptimizerParamDetail } from "@/api/configApi";
 import { MuonAdamModal } from "./MuonAdamModal";
 import type { Optimizer } from "@/types/generated/enums";
 
@@ -11,41 +13,66 @@ export interface OptimizerParamsModalProps {
   onClose: () => void;
 }
 
-// Common optimizer params - shown based on optimizer type
-const COMMON_NUMERIC_PARAMS = [
-  "beta1", "beta2", "beta3", "eps", "eps2", "weight_decay", "momentum", "dampening",
-  "alpha", "d0", "d_coef", "growth_rate", "clip_threshold", "decay_rate",
-  "lr_decay", "max_unorm", "min_8bit_size", "quant_block_size", "percentile_clipping",
-  "r", "weight_lr_power", "k", "xi", "n_sma_threshold", "slice_p",
-  "initial_accumulator_value", "initial_accumulator", "log_every", "optim_bits",
-  "prodigy_steps", "schedulefree_c", "ns_steps", "kappa_p",
-  "muon_adam_lr", "muon_te1_adam_lr", "muon_te2_adam_lr",
-  "beta3_ema", "alpha_grad", "beta1_warmup", "min_beta1", "k_warmup_steps",
-  "beta2_normuon", "normuon_eps", "ortho_rank",
-];
-
-const COMMON_BOOL_PARAMS = [
-  "adam_w_mode", "amsgrad", "bias_correction", "block_wise", "capturable", "centered",
-  "decouple", "differentiable", "fused", "fused_back_pass", "is_paged",
-  "maximize", "nesterov", "no_prox", "relative_step", "safeguard_warmup",
-  "scale_parameter", "stochastic_rounding", "use_bias_correction", "use_triton",
-  "warmup_init", "decoupled_decay", "fixed_decay", "rectify", "degenerated_to_sgd",
-  "ams_bound", "adanorm", "adam_debias", "cautious", "weight_decay_by_lr",
-  "use_speed", "split_groups", "split_groups_mean", "factored", "factored_fp32",
-  "use_stableadamw", "use_cautious", "use_grams", "use_adopt",
-  "use_orthograd", "nnmf_factor", "orthogonal_gradient", "use_atan2", "use_AdEMAMix",
-  "Simplified_AdEMAMix", "cautious_mask", "grams_moment", "kourkoutas_beta",
-  "MuonWithAuxAdam", "muon_adam_regex", "normuon_variant", "low_rank_ortho",
-  "accelerated_ns", "cautious_wd", "approx_mars", "auto_kappa_p", "compile",
-  "fsdp_in_use", "foreach", "d_limiter", "use_schedulefree", "rms_rescaling",
-];
+let cachedParams: OptimizerParamsResponse | null = null;
 
 export function OptimizerParamsModal({ open, onClose }: OptimizerParamsModalProps) {
   const [optimizer] = useConfigField<Optimizer>("optimizer.optimizer");
   const [muonAdamOpen, setMuonAdamOpen] = useState(false);
   const changeOptimizer = useConfigStore((s) => s.changeOptimizer);
 
+  const [paramsData, setParamsData] = useState<OptimizerParamsResponse | null>(cachedParams);
+  const [loading, setLoading] = useState(!cachedParams);
+
   const optimizerName = optimizer as string | undefined;
+
+  // Fetch optimizer metadata once
+  useEffect(() => {
+    if (cachedParams) return;
+    let cancelled = false;
+    setLoading(true);
+    configApi.getOptimizerParams().then((data) => {
+      if (!cancelled) {
+        cachedParams = data;
+        setParamsData(data);
+        setLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Get the parameter keys for the current optimizer
+  const optimizerInfo = paramsData && optimizerName ? paramsData.optimizers[optimizerName] : null;
+  const detailMap = useMemo(() => paramsData?.detail_map ?? {}, [paramsData]);
+
+  // Split parameters into columns by type, filtering to only those with metadata
+  const { numericParams, boolParams, strParams } = useMemo(() => {
+    if (!optimizerInfo) return { numericParams: [] as string[], boolParams: [] as string[], strParams: [] as string[] };
+
+    const numeric: string[] = [];
+    const bool: string[] = [];
+    const str: string[] = [];
+
+    for (const key of optimizerInfo.keys) {
+      // Skip muon_adam_config — has its own modal
+      if (key === "muon_adam_config") continue;
+
+      const detail: OptimizerParamDetail | undefined = detailMap[key];
+      if (!detail) continue;
+
+      if (detail.type === "bool") {
+        bool.push(key);
+      } else if (detail.type === "str") {
+        str.push(key);
+      } else {
+        numeric.push(key);
+      }
+    }
+    return { numericParams: numeric, boolParams: bool, strParams: str };
+  }, [optimizerInfo, detailMap]);
+
+  const isMuonFamily = optimizerName && (optimizerName.includes("MUON") || optimizerName.includes("ADAMUON"));
 
   return (
     <ModalBase open={open} onClose={onClose} title={`${optimizer ?? "Optimizer"} Parameters`} size="lg">
@@ -53,37 +80,61 @@ export function OptimizerParamsModal({ open, onClose }: OptimizerParamsModalProp
         <Button variant="secondary" size="sm" onClick={() => { if (optimizerName) changeOptimizer(optimizerName); }}>
           Load Defaults
         </Button>
-        {optimizerName && (optimizerName.includes("MUON") || optimizerName.includes("ADAMUON")) && (
+        {isMuonFamily && (
           <Button variant="secondary" size="sm" onClick={() => setMuonAdamOpen(true)}>
             Muon + Adam Settings
           </Button>
         )}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="flex flex-col gap-3">
-          <h4 className="text-sm font-semibold text-[var(--color-on-surface-secondary)] uppercase tracking-wide">Numeric Parameters</h4>
-          {COMMON_NUMERIC_PARAMS.map((param) => (
-            <FormEntry key={param} label={param} configPath={`optimizer.${param}`} type="number" nullable />
+
+      {loading && (
+        <p className="text-sm text-[var(--color-on-surface-secondary)] py-8 text-center">
+          Loading optimizer parameters...
+        </p>
+      )}
+
+      {!loading && !optimizerInfo && (
+        <p className="text-sm text-[var(--color-on-surface-secondary)] py-8 text-center">
+          No parameter metadata available for this optimizer.
+        </p>
+      )}
+
+      {!loading && optimizerInfo && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
+          {numericParams.map((param) => (
+            <FormEntry
+              key={param}
+              label={detailMap[param]?.title ?? param}
+              configPath={`optimizer.${param}`}
+              type="number"
+              tooltip={detailMap[param]?.tooltip}
+              nullable
+            />
+          ))}
+          {strParams.map((param) => (
+            <FormEntry
+              key={param}
+              label={detailMap[param]?.title ?? param}
+              configPath={`optimizer.${param}`}
+              tooltip={detailMap[param]?.tooltip}
+              nullable
+            />
+          ))}
+          {boolParams.map((param) => (
+            <Toggle
+              key={param}
+              configPath={`optimizer.${param}`}
+              label={detailMap[param]?.title ?? param}
+              tooltip={detailMap[param]?.tooltip}
+            />
           ))}
         </div>
-        <div className="flex flex-col gap-3">
-          <h4 className="text-sm font-semibold text-[var(--color-on-surface-secondary)] uppercase tracking-wide">Boolean Parameters</h4>
-          {COMMON_BOOL_PARAMS.map((param) => (
-            <Toggle key={param} configPath={`optimizer.${param}`} label={param} />
-          ))}
-          <FormEntry label="muon_hidden_layers" configPath="optimizer.muon_hidden_layers" tooltip="Comma-separated hidden layer filter for Muon optimizer" nullable />
-        </div>
-      </div>
+      )}
+
       <div className="flex justify-end mt-6 pt-4 border-t border-[var(--color-border-subtle)]">
-        <button
-          onClick={onClose}
-          className="px-4 py-2 rounded-[var(--radius-sm)] text-sm font-medium
-            bg-transparent border border-[var(--color-border-subtle)]
-            text-[var(--color-on-surface)] hover:border-[var(--color-orchid-600)]
-            transition-colors duration-200 cursor-pointer"
-        >
+        <Button variant="secondary" onClick={onClose}>
           Close
-        </button>
+        </Button>
       </div>
       <MuonAdamModal open={muonAdamOpen} onClose={() => setMuonAdamOpen(false)} />
     </ModalBase>

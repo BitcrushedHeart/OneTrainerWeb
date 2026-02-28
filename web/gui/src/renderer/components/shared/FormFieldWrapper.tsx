@@ -15,19 +15,23 @@ export interface FormFieldWrapperProps {
 export function FormFieldWrapper({ label, tooltip, configPath, className, style, children }: FormFieldWrapperProps) {
   const resolvedTooltip = tooltip ?? (configPath ? getTooltip(configPath) : undefined);
 
+  const wrapperClass = className ?? (label ? "flex flex-col gap-1.5 pl-3 border-l-2 border-transparent hover:border-[color-mix(in_srgb,var(--color-orchid-600)_20%,transparent)] transition-[border-color] duration-300" : "flex flex-col gap-1");
+
+  if (!label) {
+    return <div className={wrapperClass} style={style}>{children}</div>;
+  }
+
   return (
-    <div className={className ?? "flex flex-col gap-1"} style={style}>
-      {label && (
-        <div className="flex items-center gap-1">
-          <span className="text-sm font-medium text-[var(--color-on-surface)]">{label}</span>
-          {resolvedTooltip && (
-            <Tooltip content={resolvedTooltip}>
-              <Info className="w-3.5 h-3.5 text-[var(--color-on-surface-secondary)] cursor-help" />
-            </Tooltip>
-          )}
-        </div>
-      )}
+    <label className={wrapperClass} style={style}>
+      <div className="flex items-center gap-1">
+        <span className="text-sm font-medium text-[var(--color-on-surface)] cursor-pointer">{label}</span>
+        {resolvedTooltip && (
+          <Tooltip content={resolvedTooltip}>
+            <Info className="w-4 h-4 text-[var(--color-on-surface-secondary)] hover:text-[var(--color-orchid-600)] transition-colors duration-200 cursor-help" />
+          </Tooltip>
+        )}
+      </div>
       {children}
-    </div>
+    </label>
   );
 }

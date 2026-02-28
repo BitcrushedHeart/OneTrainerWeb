@@ -1,40 +1,16 @@
 import type { ModelType } from "@/types/generated/enums";
+import { DTYPE_SUBSETS } from "@/types/generated/dataTypeSubsets";
+import { MODEL_TYPE_GROUPS } from "@/types/generated/modelTypeInfo";
 import type { FieldDef, SectionDef } from "./fieldTypes";
 
 export interface ModelSchema {
   sections: SectionDef[];
 }
 
-const DTYPE_OPTIONS = [
-  { label: "float32", value: "FLOAT_32" },
-  { label: "bfloat16", value: "BFLOAT_16" },
-  { label: "float16", value: "FLOAT_16" },
-  { label: "float8 (W8)", value: "FLOAT_8" },
-  { label: "nfloat4", value: "NFLOAT_4" },
-];
-
-const DTYPE_WITH_A8 = [
-  ...DTYPE_OPTIONS,
-  { label: "float W8A8", value: "FLOAT_W8A8" },
-  { label: "int W8A8", value: "INT_W8A8" },
-];
-
-const DTYPE_WITH_GGUF_A8 = [
-  ...DTYPE_OPTIONS,
-  { label: "float W8A8", value: "FLOAT_W8A8" },
-  { label: "int W8A8", value: "INT_W8A8" },
-  { label: "GGUF", value: "GGUF" },
-  { label: "GGUF A8 float", value: "GGUF_A8_FLOAT" },
-  { label: "GGUF A8 int", value: "GGUF_A8_INT" },
-];
-
-const OUTPUT_DTYPE_OPTIONS = [
-  { label: "float16", value: "FLOAT_16" },
-  { label: "float32", value: "FLOAT_32" },
-  { label: "bfloat16", value: "BFLOAT_16" },
-  { label: "float8", value: "FLOAT_8" },
-  { label: "nfloat4", value: "NFLOAT_4" },
-];
+const DTYPE_OPTIONS = DTYPE_SUBSETS.base;
+const DTYPE_WITH_A8 = DTYPE_SUBSETS.with_a8;
+const DTYPE_WITH_GGUF_A8 = DTYPE_SUBSETS.with_gguf_a8;
+const OUTPUT_DTYPE_OPTIONS = DTYPE_SUBSETS.output;
 
 // Base section present on all models
 function baseSection(): SectionDef {
@@ -57,7 +33,7 @@ function quantizationSection(): SectionDef {
       { key: "quantization.layer_filter_preset", label: "Quantization Preset", type: "select", stringOptions: ["full", "custom"] },
       { key: "quantization.layer_filter", label: "Quantization Filter", type: "entry", tooltip: "Comma-separated layers to quantize" },
       { key: "quantization.layer_filter_regex", label: "Regex", type: "toggle" },
-      { key: "quantization.svd_dtype", label: "SVDQuant", type: "select-kv", options: [{ label: "disabled", value: "NONE" }, { label: "float32", value: "FLOAT_32" }, { label: "bfloat16", value: "BFLOAT_16" }] },
+      { key: "quantization.svd_dtype", label: "SVDQuant", type: "select-kv", options: DTYPE_SUBSETS.svd_quant },
       { key: "quantization.svd_rank", label: "SVDQuant Rank", type: "entry", inputType: "number" },
     ],
   };
@@ -111,7 +87,7 @@ function outputSection(): SectionDef {
     fields: [
       { key: "output_model_destination", label: "Model Output Destination", type: "file", tooltip: "Where to save output model" },
       { key: "output_dtype", label: "Output Data Type", type: "select-kv", options: OUTPUT_DTYPE_OPTIONS, tooltip: "Precision for saving" },
-      { key: "output_model_format", label: "Output Format", type: "select", stringOptions: ["SAFETENSORS", "DIFFUSERS"] },
+      { key: "output_model_format", label: "Output Format", type: "select", stringOptions: ["SAFETENSORS", "DIFFUSERS", "CKPT", "COMFY_LORA"] },
       { key: "include_train_config", label: "Include Config", type: "select", stringOptions: ["NONE", "SETTINGS", "ALL"], tooltip: "Include training config in output" },
     ],
   };
@@ -260,26 +236,20 @@ const HI_DREAM_SCHEMA: ModelSchema = {
   ],
 };
 
+function inGroup(mt: ModelType, group: string): boolean {
+  return (MODEL_TYPE_GROUPS[group] as string[] | undefined)?.includes(mt) ?? false;
+}
+
 export function getModelSchema(modelType: ModelType): ModelSchema {
-  // SD 1.5 variants
-  if (modelType.startsWith("STABLE_DIFFUSION_15") || modelType.startsWith("STABLE_DIFFUSION_20") || modelType.startsWith("STABLE_DIFFUSION_21")) return SD_SCHEMA;
-  // SDXL
-  if (modelType.startsWith("STABLE_DIFFUSION_XL")) return SDXL_SCHEMA;
-  // SD3
-  if (modelType === "STABLE_DIFFUSION_3" || modelType === "STABLE_DIFFUSION_35") return SD3_SCHEMA;
-  // Flux 1
-  if (modelType === "FLUX_DEV_1" || modelType === "FLUX_FILL_DEV_1") return FLUX_SCHEMA;
-  // Flux 2, Z-Image, Chroma, Qwen
-  if (modelType === "FLUX_2" || modelType === "Z_IMAGE" || modelType === "CHROMA_1" || modelType === "QWEN") return FLUX2_SCHEMA;
-  // Pixart, Sana
-  if (modelType === "PIXART_ALPHA" || modelType === "PIXART_SIGMA" || modelType === "SANA") return PIXART_SCHEMA;
-  // Wuerstchen, Stable Cascade
-  if (modelType === "WUERSTCHEN_2") return WUERSTCHEN_SCHEMA;
-  if (modelType === "STABLE_CASCADE_1") return STABLE_CASCADE_SCHEMA;
-  // Hunyuan Video
-  if (modelType === "HUNYUAN_VIDEO") return HUNYUAN_SCHEMA;
-  // HiDream
-  if (modelType === "HI_DREAM_FULL") return HI_DREAM_SCHEMA;
-  // Fallback
+  if (inGroup(modelType, "is_stable_diffusion")) return SD_SCHEMA;
+  if (inGroup(modelType, "is_stable_diffusion_xl")) return SDXL_SCHEMA;
+  if (inGroup(modelType, "is_stable_diffusion_3")) return SD3_SCHEMA;
+  if (inGroup(modelType, "is_flux_1")) return FLUX_SCHEMA;
+  if (inGroup(modelType, "is_flux_2") || inGroup(modelType, "is_z_image") || inGroup(modelType, "is_chroma") || inGroup(modelType, "is_qwen")) return FLUX2_SCHEMA;
+  if (inGroup(modelType, "is_pixart") || inGroup(modelType, "is_sana")) return PIXART_SCHEMA;
+  if (inGroup(modelType, "is_wuerstchen_v2")) return WUERSTCHEN_SCHEMA;
+  if (inGroup(modelType, "is_stable_cascade")) return STABLE_CASCADE_SCHEMA;
+  if (inGroup(modelType, "is_hunyuan_video")) return HUNYUAN_SCHEMA;
+  if (inGroup(modelType, "is_hi_dream")) return HI_DREAM_SCHEMA;
   return SD_SCHEMA;
 }

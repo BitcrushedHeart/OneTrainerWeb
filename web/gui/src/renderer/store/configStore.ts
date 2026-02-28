@@ -3,18 +3,6 @@ import { immer } from "zustand/middleware/immer";
 import { configApi } from "@/api/configApi";
 import type { TrainConfig } from "@/types/generated/config";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve a dot-notation path against an object and set the value.
- *
- * Example: `setByPath(obj, "optimizer.learning_rate", 1e-4)` sets
- * `obj.optimizer.learning_rate = 1e-4`.
- *
- * Works on Immer draft objects so mutations are safe.
- */
 function setByPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const keys = path.split(".");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,7 +11,6 @@ function setByPath(obj: Record<string, unknown>, path: string, value: unknown): 
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i];
     if (current[key] === undefined || current[key] === null) {
-      // Automatically create intermediate objects when a segment is missing.
       current[key] = {};
     }
     current = current[key];
@@ -33,10 +20,6 @@ function setByPath(obj: Record<string, unknown>, path: string, value: unknown): 
   current[lastKey] = value;
 }
 
-/**
- * Retrieve a value at a dot-notation path. Returns `undefined` if any
- * intermediate segment is missing.
- */
 export function getByPath(obj: Record<string, unknown>, path: string): unknown {
   const keys = path.split(".");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,14 +35,10 @@ export function getByPath(obj: Record<string, unknown>, path: string): unknown {
   return current;
 }
 
-// ---------------------------------------------------------------------------
-// Debounce timer management
-// ---------------------------------------------------------------------------
-
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 const SYNC_DEBOUNCE_MS = 500;
 
-/** Generation counter for stale-response protection in syncToBackend. */
+// stale-response guard
 let syncGeneration = 0;
 
 function cancelPendingSync(): void {
@@ -69,84 +48,47 @@ function cancelPendingSync(): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Store interface
-// ---------------------------------------------------------------------------
-
-interface ConfigState {
-  /** The current working config. `null` until first load completes. */
-  config: TrainConfig | null;
-
-  /** True when local state has unsaved changes not yet synced to the backend. */
-  isDirty: boolean;
-
-  /** True while an async operation (load, sync, preset, etc.) is in progress. */
-  isLoading: boolean;
-
-  /** Human-readable error message from the last failed operation, or `null`. */
-  error: string | null;
-
-  /** Name of the currently loaded preset, or `null` if using defaults. */
-  loadedPresetName: string | null;
-
-  // -- Actions --------------------------------------------------------------
-
-  /** Fetch the current config from the backend and replace local state. */
-  loadConfig: () => Promise<void>;
-
-  /**
-   * Update a single field by dot-notation path.
-   *
-   * Marks the store dirty and schedules a debounced sync to the backend.
-   * The sync batches all field changes that arrive within 500 ms.
-   */
-  updateField: (path: string, value: unknown) => void;
-
-  /** Merge a partial config object into local state (shallow at top level). */
-  updateConfig: (partial: Partial<TrainConfig>) => void;
-
-  /**
-   * Immediately PUT the full local config to the backend.
-   *
-   * The backend response replaces local state entirely, ensuring
-   * reconciliation of any server-side defaults or validations.
-   */
-  syncToBackend: () => Promise<void>;
-
-  /** Load a preset by path. Replaces the local config with the preset. */
-  loadPreset: (presetPath: string, presetName?: string) => Promise<void>;
-
-  /** Save the current config as a named preset. */
-  savePreset: (name: string) => Promise<void>;
-
-  /**
-   * Auto-load a preset on startup. Tries the last-used preset first,
-   * then falls back to a Z-Image preset, then to any available preset.
-   */
-  autoLoadPreset: () => Promise<void>;
-
-  /**
-   * Change the optimizer and reload server-computed defaults.
-   *
-   * Updates `config.optimizer.optimizer`, syncs to backend, and the returned
-   * config will contain the backend-populated optimizer defaults for the
-   * selected optimizer.
-   */
-  changeOptimizer: (optimizer: string) => Promise<void>;
-
-  /** Replace local config with factory defaults from the backend. */
-  loadDefaults: () => Promise<void>;
-
-  /** Export the current config as a JSON object (includes inlined concepts/samples). */
-  exportConfig: () => Promise<TrainConfig>;
-
-  /** Clear the current error. */
-  clearError: () => void;
+function scheduleDebouncedSync(get: () => ConfigState): void {
+  cancelPendingSync();
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    void get().syncToBackend();
+  }, SYNC_DEBOUNCE_MS);
 }
 
-// ---------------------------------------------------------------------------
-// Store implementation
-// ---------------------------------------------------------------------------
+type ImmerSet = (fn: (draft: ConfigState) => void) => void;
+
+async function withLoading(set: ImmerSet, fn: () => Promise<void>): Promise<void> {
+  set((draft) => { draft.isLoading = true; draft.error = null; });
+  try {
+    await fn();
+  } catch (err) {
+    set((draft) => {
+      draft.error = err instanceof Error ? err.message : String(err);
+      draft.isLoading = false;
+    });
+  }
+}
+
+interface ConfigState {
+  config: TrainConfig | null;
+  isDirty: boolean;
+  isLoading: boolean;
+  error: string | null;
+  loadedPresetName: string | null;
+
+  loadConfig: () => Promise<void>;
+  updateField: (path: string, value: unknown) => void;
+  updateConfig: (partial: Partial<TrainConfig>) => void;
+  syncToBackend: () => Promise<void>;
+  loadPreset: (presetPath: string, presetName?: string) => Promise<void>;
+  savePreset: (name: string) => Promise<void>;
+  autoLoadPreset: () => Promise<void>;
+  changeOptimizer: (optimizer: string) => Promise<void>;
+  loadDefaults: () => Promise<void>;
+  exportConfig: () => Promise<TrainConfig>;
+  clearError: () => void;
+}
 
 export const useConfigStore = create<ConfigState>()(
   immer((set, get) => ({
@@ -156,15 +98,8 @@ export const useConfigStore = create<ConfigState>()(
     error: null,
     loadedPresetName: null,
 
-    // -- loadConfig ---------------------------------------------------------
-
     loadConfig: async () => {
-      set((draft) => {
-        draft.isLoading = true;
-        draft.error = null;
-      });
-
-      try {
+      await withLoading(set, async () => {
         const config = await configApi.getConfig();
         cancelPendingSync();
         set((draft) => {
@@ -172,15 +107,8 @@ export const useConfigStore = create<ConfigState>()(
           draft.isDirty = false;
           draft.isLoading = false;
         });
-      } catch (err) {
-        set((draft) => {
-          draft.error = err instanceof Error ? err.message : String(err);
-          draft.isLoading = false;
-        });
-      }
+      });
     },
-
-    // -- updateField --------------------------------------------------------
 
     updateField: (path: string, value: unknown) => {
       set((draft) => {
@@ -189,16 +117,8 @@ export const useConfigStore = create<ConfigState>()(
         draft.isDirty = true;
         draft.error = null;
       });
-
-      // Schedule a debounced sync to the backend.
-      cancelPendingSync();
-      syncTimer = setTimeout(() => {
-        syncTimer = null;
-        void get().syncToBackend();
-      }, SYNC_DEBOUNCE_MS);
+      scheduleDebouncedSync(get);
     },
-
-    // -- updateConfig -------------------------------------------------------
 
     updateConfig: (partial: Partial<TrainConfig>) => {
       set((draft) => {
@@ -207,15 +127,8 @@ export const useConfigStore = create<ConfigState>()(
         draft.isDirty = true;
         draft.error = null;
       });
-
-      cancelPendingSync();
-      syncTimer = setTimeout(() => {
-        syncTimer = null;
-        void get().syncToBackend();
-      }, SYNC_DEBOUNCE_MS);
+      scheduleDebouncedSync(get);
     },
-
-    // -- syncToBackend ------------------------------------------------------
 
     syncToBackend: async () => {
       const { config, isDirty } = get();
@@ -232,7 +145,6 @@ export const useConfigStore = create<ConfigState>()(
 
       try {
         const reconciled = await configApi.updateConfig(config);
-        // Only apply if no newer sync operation has started since this one.
         if (gen === syncGeneration) {
           set((draft) => {
             draft.config = reconciled;
@@ -250,17 +162,11 @@ export const useConfigStore = create<ConfigState>()(
       }
     },
 
-    // -- loadPreset ---------------------------------------------------------
-
     loadPreset: async (presetPath: string, presetName?: string) => {
       cancelPendingSync();
+      ++syncGeneration;
 
-      set((draft) => {
-        draft.isLoading = true;
-        draft.error = null;
-      });
-
-      try {
+      await withLoading(set, async () => {
         const config = await configApi.loadPreset(presetPath);
         const name = presetName ?? presetPath.replace(/.*[/\\]/, "").replace(/\.json$/, "");
         set((draft) => {
@@ -269,52 +175,28 @@ export const useConfigStore = create<ConfigState>()(
           draft.isLoading = false;
           draft.loadedPresetName = name;
         });
-        // Persist last-used preset for auto-load on next startup
         try { localStorage.setItem("onetrainer_last_preset", presetPath); } catch { /* ignore */ }
-      } catch (err) {
-        set((draft) => {
-          draft.error = err instanceof Error ? err.message : String(err);
-          draft.isLoading = false;
-        });
-      }
+      });
     },
 
-    // -- savePreset ---------------------------------------------------------
-
     savePreset: async (name: string) => {
-      // Flush any pending field changes before saving.
       const { isDirty } = get();
       if (isDirty) {
         cancelPendingSync();
         await get().syncToBackend();
       }
 
-      set((draft) => {
-        draft.isLoading = true;
-        draft.error = null;
-      });
-
-      try {
+      await withLoading(set, async () => {
         await configApi.savePreset(name);
-        set((draft) => {
-          draft.isLoading = false;
-        });
-      } catch (err) {
-        set((draft) => {
-          draft.error = err instanceof Error ? err.message : String(err);
-          draft.isLoading = false;
-        });
-      }
+        set((draft) => { draft.isLoading = false; });
+      });
     },
-
-    // -- autoLoadPreset -----------------------------------------------------
 
     autoLoadPreset: async () => {
       try {
         const presets = await configApi.listPresets();
         if (presets.length === 0) return;
 
-        // 1. Try last-used preset
         const lastPath = localStorage.getItem("onetrainer_last_preset");
         if (lastPath) {
           const match = presets.find((p) => p.path === lastPath);
@@ -324,14 +206,12 @@ export const useConfigStore = create<ConfigState>()(
           }
         }
 
-        // 2. Try Z-Image preset (user preference)
         const zImage = presets.find((p) => p.name.toLowerCase().includes("z-image") || p.name.toLowerCase().includes("z_image"));
         if (zImage) {
           await get().loadPreset(zImage.path, zImage.name);
           return;
         }
 
-        // 3. Fallback: load first built-in preset
         const builtin = presets.find((p) => p.is_builtin);
         if (builtin) {
           await get().loadPreset(builtin.path, builtin.name);
@@ -341,53 +221,35 @@ export const useConfigStore = create<ConfigState>()(
       }
     },
 
-    // -- changeOptimizer ----------------------------------------------------
-
     changeOptimizer: async (optimizer: string) => {
       cancelPendingSync();
+      ++syncGeneration;
 
-      set((draft) => {
-        if (draft.config === null) return;
-        // Optimistically update the optimizer field so the UI reflects
-        // the selection immediately.
-        draft.config.optimizer.optimizer = optimizer as TrainConfig["optimizer"]["optimizer"];
-        draft.isDirty = true;
-        draft.error = null;
+      await withLoading(set, async () => {
+        const config = await configApi.changeOptimizer(optimizer);
+        set((draft) => {
+          draft.config = config;
+          draft.isDirty = false;
+          draft.isLoading = false;
+        });
       });
-
-      // Sync immediately -- the backend will populate optimizer defaults.
-      await get().syncToBackend();
     },
-
-    // -- loadDefaults -------------------------------------------------------
 
     loadDefaults: async () => {
       cancelPendingSync();
+      ++syncGeneration;
 
-      set((draft) => {
-        draft.isLoading = true;
-        draft.error = null;
-      });
-
-      try {
+      await withLoading(set, async () => {
         const defaults = await configApi.getDefaults();
         set((draft) => {
           draft.config = defaults;
           draft.isDirty = false;
           draft.isLoading = false;
         });
-      } catch (err) {
-        set((draft) => {
-          draft.error = err instanceof Error ? err.message : String(err);
-          draft.isLoading = false;
-        });
-      }
+      });
     },
 
-    // -- exportConfig -------------------------------------------------------
-
     exportConfig: async () => {
-      // Flush pending changes so the export is up to date.
       const { isDirty } = get();
       if (isDirty) {
         cancelPendingSync();
@@ -408,8 +270,6 @@ export const useConfigStore = create<ConfigState>()(
         throw err;
       }
     },
-
-    // -- clearError ---------------------------------------------------------
 
     clearError: () => {
       set((draft) => {

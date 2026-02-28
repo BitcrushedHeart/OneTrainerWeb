@@ -1,20 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { configApi } from "@/api/configApi";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface WikiSection {
   title: string;
   pages: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Markdown-to-HTML converter (regex-based, no external dependencies)
-// ---------------------------------------------------------------------------
-
-/** Escape HTML special characters in text content. */
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -23,10 +14,6 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/**
- * Convert a single line of inline markdown to HTML.
- * Preserves inline HTML tags (like <img>, <br>, etc.).
- */
 function inlineMarkdown(line: string): string {
   // Split on HTML tags to preserve them, escape only non-HTML parts
   const parts = line.split(/(<[^>]+>)/g);
@@ -68,14 +55,12 @@ function inlineMarkdown(line: string): string {
   return result;
 }
 
-/** Check if a line is raw HTML (starts with an HTML tag). */
 function isHtmlLine(line: string): boolean {
   return /^\s*<(?:img|div|p|br|hr|details|summary|table|tr|td|th|thead|tbody|figcaption|figure|picture|source|video|iframe)\b/i.test(
     line.trim(),
   );
 }
 
-/** Convert a full markdown string to HTML. */
 function markdownToHtml(md: string): string {
   const lines = md.split("\n");
   const html: string[] = [];
@@ -252,18 +237,9 @@ function markdownToHtml(md: string): string {
   return html.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Page name formatting
-// ---------------------------------------------------------------------------
-
-/** Convert a wiki slug like "Getting-Started" to "Getting Started". */
 function formatPageName(slug: string): string {
   return slug.replace(/-/g, " ").replace("F.A.Q.", "FAQ");
 }
-
-// ---------------------------------------------------------------------------
-// Fallback sections when API is unavailable
-// ---------------------------------------------------------------------------
 
 const FALLBACK_SECTIONS: WikiSection[] = [
   {
@@ -287,10 +263,6 @@ const FALLBACK_SECTIONS: WikiSection[] = [
     pages: ["F.A.Q.", "Lessons-Learnt-and-Tutorials"],
   },
 ];
-
-// ---------------------------------------------------------------------------
-// HelpPage component
-// ---------------------------------------------------------------------------
 
 export default function HelpPage() {
   const [sections, setSections] = useState<WikiSection[]>([]);
@@ -351,7 +323,6 @@ export default function HelpPage() {
 
   return (
     <div className="flex gap-0" style={{ minHeight: "calc(100vh - 200px)" }}>
-      {/* Sidebar */}
       <nav
         className="flex-shrink-0 border-r"
         style={{
@@ -402,7 +373,7 @@ export default function HelpPage() {
                         transition: "background-color 200ms ease-out, color 200ms ease-out",
                         background:
                           activePage === slug
-                            ? "linear-gradient(90deg, rgba(194, 24, 232, 0.12), rgba(138, 77, 255, 0.08))"
+                            ? "linear-gradient(90deg, var(--color-orchid-600-alpha-12), var(--color-violet-500-alpha-08))"
                             : "transparent",
                         color:
                           activePage === slug
@@ -435,7 +406,6 @@ export default function HelpPage() {
         </div>
       </nav>
 
-      {/* Main content area */}
       <div
         className="flex-1"
         style={{
@@ -491,8 +461,8 @@ export default function HelpPage() {
           <div
             style={{
               padding: "24px",
-              background: "rgba(248, 113, 113, 0.08)",
-              border: "1px solid rgba(248, 113, 113, 0.2)",
+              background: "var(--color-error-500-alpha-08)",
+              border: "1px solid var(--color-error-500-alpha-20)",
               borderRadius: "var(--radius-sm)",
               color: "var(--color-error-500)",
               textAlign: "center",
@@ -502,7 +472,7 @@ export default function HelpPage() {
             <button
               onClick={() => fetchPage(activePage)}
               className="action-button"
-              style={{ fontSize: "0.8125rem" }}
+              style={{ fontSize: "var(--text-caption)" }}
             >
               Retry
             </button>

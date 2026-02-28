@@ -1,45 +1,20 @@
-"""
-Singleton service that manages dataset tool operations (captioning and masking).
-
-This mirrors the tool logic in ``modules/ui/CaptionUI.py`` (load_captioning_model,
-load_masking_model) and ``modules/ui/GenerateCaptionsWindow.py`` /
-``modules/ui/GenerateMasksWindow.py`` but decouples it from the customtkinter GUI
-and exposes it through a clean API that the FastAPI routers can call.
-
-Tool operations run in a background thread so the REST API can respond immediately.
-"""
-
 import logging
 import threading
 import traceback
 import uuid
 from contextlib import suppress
-from typing import Any
+from typing import Any, Literal
 
 from web.backend.services._singleton import SingletonMixin
 
 logger = logging.getLogger(__name__)
 
+ToolStatus = Literal["idle", "running", "completed", "error"]
 
-# ---------------------------------------------------------------------------
-# Display-name to internal mode-string mappings (match legacy UI windows)
-# ---------------------------------------------------------------------------
+VALID_CAPTION_MODES = {"replace", "fill", "add"}
 
-CAPTION_MODE_MAP: dict[str, str] = {
-    "replace": "replace",
-    "fill": "fill",
-    "add": "add",
-}
+VALID_MASK_MODES = {"replace", "fill", "add", "subtract", "blend"}
 
-MASK_MODE_MAP: dict[str, str] = {
-    "replace": "replace",
-    "fill": "fill",
-    "add": "add",
-    "subtract": "subtract",
-    "blend": "blend",
-}
-
-# Display-name to model class mapping (mirrors CaptionUI.load_captioning_model)
 CAPTION_MODEL_MAP: dict[str, str] = {
     "Blip": "BlipModel",
     "Blip2": "Blip2Model",
@@ -54,18 +29,10 @@ MASK_MODEL_MAP: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# ToolService
-# ---------------------------------------------------------------------------
-
 class ToolService(SingletonMixin):
-    """
-    Thread-safe singleton that owns a single background tool thread and
-    exposes lifecycle commands (generate, cancel, status).
-    """
 
     def __init__(self) -> None:
-        self._status: str = "idle"  # "idle" | "running" | "completed" | "error"
+        self._status: ToolStatus = "idle"
         self._progress: int = 0
         self._max_progress: int = 0
         self._error_message: str | None = None
@@ -74,15 +41,10 @@ class ToolService(SingletonMixin):
         self._cancel_flag: bool = False
         self._lock = threading.Lock()
 
-        # Cached model instances (reused across runs, like CaptionUI)
         self._captioning_model: Any = None
         self._masking_model: Any = None
 
-    # ------------------------------------------------------------------
-    # Status helpers (thread-safe)
-    # ------------------------------------------------------------------
-
-    def _set_status(self, status: str, error: str | None = None) -> None:
+    def _set_status(self, status: ToolStatus, error: str | None = None) -> None:
         with self._lock:
             self._status = status
             self._error_message = error
@@ -93,7 +55,6 @@ class ToolService(SingletonMixin):
             self._max_progress = total
 
     def get_status(self) -> dict:
-        """Return a snapshot of the current tool operation status."""
         with self._lock:
             return {
                 "status": self._status,
@@ -103,47 +64,39 @@ class ToolService(SingletonMixin):
                 "task_id": self._task_id,
             }
 
-    # ------------------------------------------------------------------
-    # Caption generation
-    # ------------------------------------------------------------------
-
-    def generate_captions(self, request: Any) -> dict:
-        """
-        Start a batch caption generation operation in a background thread.
-
-        Returns ``{"ok": True, "task_id": "..."}`` on success, or
-        ``{"ok": False, "error": "..."}`` if a tool operation is already running.
-        """
+    def _start_background_task(self, target, args: tuple, thread_name: str) -> dict:
+        task_id = str(uuid.uuid4())
         with self._lock:
             if self._status == "running":
                 return {"ok": False, "error": "A tool operation is already running"}
-
-        task_id = str(uuid.uuid4())
-        self._task_id = task_id
-        self._cancel_flag = False
-        self._set_status("running")
-        self._update_progress(0, 0)
+            self._status = "running"
+            self._progress = 0
+            self._max_progress = 0
+            self._error_message = None
+            self._task_id = task_id
+            self._cancel_flag = False
 
         thread = threading.Thread(
-            target=self._caption_thread_fn,
-            args=(request, task_id),
-            daemon=True,
-            name="OneTrainerWeb-caption-tool",
+            target=target, args=(*args, task_id),
+            daemon=True, name=thread_name,
         )
         self._thread = thread
         thread.start()
-
         return {"ok": True, "task_id": task_id}
 
+    def generate_captions(self, request: Any) -> dict:
+        return self._start_background_task(
+            self._caption_thread_fn, (request,), "OneTrainerWeb-caption-tool",
+        )
+
     def _caption_thread_fn(self, request: Any, task_id: str) -> None:
-        """Run captioning in a dedicated thread."""
         try:
             model = self._load_captioning_model(request.model)
             if model is None:
                 self._set_status("error", f"Unknown captioning model: {request.model}")
                 return
 
-            mode = CAPTION_MODE_MAP.get(request.mode, "fill")
+            mode = request.mode if request.mode in VALID_CAPTION_MODES else "fill"
 
             model.caption_folder(
                 sample_dir=request.folder,
@@ -165,52 +118,24 @@ class ToolService(SingletonMixin):
             self._set_status("idle")
         except Exception:
             traceback.print_exc()
-            self._set_status("error", "Caption generation failed -- check the console for details")
+            self._set_status("error", "Caption generation failed -- check the Terminal panel for details")
         finally:
             self._thread = None
             self._release_models()
 
-    # ------------------------------------------------------------------
-    # Mask generation
-    # ------------------------------------------------------------------
-
     def generate_masks(self, request: Any) -> dict:
-        """
-        Start a batch mask generation operation in a background thread.
-
-        Returns ``{"ok": True, "task_id": "..."}`` on success, or
-        ``{"ok": False, "error": "..."}`` if a tool operation is already running.
-        """
-        with self._lock:
-            if self._status == "running":
-                return {"ok": False, "error": "A tool operation is already running"}
-
-        task_id = str(uuid.uuid4())
-        self._task_id = task_id
-        self._cancel_flag = False
-        self._set_status("running")
-        self._update_progress(0, 0)
-
-        thread = threading.Thread(
-            target=self._mask_thread_fn,
-            args=(request, task_id),
-            daemon=True,
-            name="OneTrainerWeb-mask-tool",
+        return self._start_background_task(
+            self._mask_thread_fn, (request,), "OneTrainerWeb-mask-tool",
         )
-        self._thread = thread
-        thread.start()
-
-        return {"ok": True, "task_id": task_id}
 
     def _mask_thread_fn(self, request: Any, task_id: str) -> None:
-        """Run mask generation in a dedicated thread."""
         try:
             model = self._load_masking_model(request.model)
             if model is None:
                 self._set_status("error", f"Unknown masking model: {request.model}")
                 return
 
-            mode = MASK_MODE_MAP.get(request.mode, "fill")
+            mode = request.mode if request.mode in VALID_MASK_MODES else "fill"
             prompts = [request.prompt] if request.prompt else []
 
             model.mask_folder(
@@ -235,17 +160,12 @@ class ToolService(SingletonMixin):
             self._set_status("idle")
         except Exception:
             traceback.print_exc()
-            self._set_status("error", "Mask generation failed -- check the console for details")
+            self._set_status("error", "Mask generation failed -- check the Terminal panel for details")
         finally:
             self._thread = None
             self._release_models()
 
-    # ------------------------------------------------------------------
-    # Cancel
-    # ------------------------------------------------------------------
-
     def cancel(self) -> dict:
-        """Request cancellation of the current tool operation."""
         with self._lock:
             if self._status != "running":
                 return {"ok": False, "error": "No tool operation is running"}
@@ -253,10 +173,6 @@ class ToolService(SingletonMixin):
             self._status = "idle"
             self._error_message = None
         return {"ok": True}
-
-    # ------------------------------------------------------------------
-    # Progress callback (called from the model on the tool thread)
-    # ------------------------------------------------------------------
 
     def _progress_callback(self, current: int, total: int) -> None:
         if self._cancel_flag:
@@ -266,17 +182,7 @@ class ToolService(SingletonMixin):
     def _error_callback(self, filename: str) -> None:
         logger.warning("Tool error processing file: %s", filename)
 
-    # ------------------------------------------------------------------
-    # Model loading (mirrors CaptionUI.load_captioning_model / load_masking_model)
-    # ------------------------------------------------------------------
-
     def _load_captioning_model(self, model_name: str) -> Any:
-        """
-        Lazily load the requested captioning model.
-
-        All torch/model imports are deferred to here so that the FastAPI
-        process does not load heavy ML dependencies at startup.
-        """
         from modules.util.torch_util import default_device
 
         import torch
@@ -304,12 +210,6 @@ class ToolService(SingletonMixin):
         return self._captioning_model
 
     def _load_masking_model(self, model_name: str) -> Any:
-        """
-        Lazily load the requested masking model.
-
-        All torch/model imports are deferred to here so that the FastAPI
-        process does not load heavy ML dependencies at startup.
-        """
         from modules.util.torch_util import default_device
 
         import torch
@@ -342,7 +242,6 @@ class ToolService(SingletonMixin):
         return self._masking_model
 
     def _release_models(self) -> None:
-        """Release all tool models from memory and run garbage collection."""
         freed = False
         if self._captioning_model is not None:
             self._captioning_model = None

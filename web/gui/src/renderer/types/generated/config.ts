@@ -29,6 +29,47 @@ import type {
   VideoFormat,
 } from './enums';
 
+export interface CloudConfig {
+  enabled: boolean;
+  type: CloudType;
+  file_sync: CloudFileSync;
+  create: boolean;
+  name: string;
+  tensorboard_tunnel: boolean;
+  sub_type: string;
+  gpu_type: string;
+  volume_size: number;
+  min_download: number;
+  remote_dir: string;
+  huggingface_cache_dir: string;
+  onetrainer_dir: string;
+  install_cmd: string;
+  install_onetrainer: boolean;
+  update_onetrainer: boolean;
+  detach_trainer: boolean;
+  run_id: string;
+  download_samples: boolean;
+  download_output_model: boolean;
+  download_saves: boolean;
+  download_backups: boolean;
+  download_tensorboard: boolean;
+  delete_workspace: boolean;
+  on_finish: CloudAction;
+  on_error: CloudAction;
+  on_detached_finish: CloudAction;
+  on_detached_error: CloudAction;
+}
+
+export interface CloudSecretsConfig {
+  api_key: string;
+  id: string;
+  host: string;
+  port: string;
+  user: string;
+  key_file: string;
+  password: string;
+}
+
 export interface ConceptImageConfig {
   enable_crop_jitter: boolean;
   enable_random_flip: boolean;
@@ -89,6 +130,46 @@ export interface ConceptConfig {
   concept_stats: Record<string, unknown>;
 }
 
+export interface SampleConfig {
+  enabled: boolean;
+  prompt: string;
+  negative_prompt: string;
+  height: number;
+  width: number;
+  frames: number;
+  length: number;
+  seed: number;
+  random_seed: boolean;
+  diffusion_steps: number;
+  cfg_scale: number;
+  noise_scheduler: NoiseScheduler;
+  text_encoder_1_layer_skip: number;
+  text_encoder_1_sequence_length: number | null;
+  text_encoder_2_layer_skip: number;
+  text_encoder_2_sequence_length: number | null;
+  text_encoder_3_layer_skip: number;
+  text_encoder_4_layer_skip: number;
+  transformer_attention_mask: boolean;
+  force_last_timestep: boolean;
+  sample_inpainting: boolean;
+  base_image_path: string;
+  mask_image_path: string;
+}
+
+export interface SecretsConfig {
+  huggingface_token: string;
+  cloud: CloudSecretsConfig;
+}
+
+export interface QuantizationConfig {
+  layer_filter: string;
+  layer_filter_preset: string;
+  layer_filter_regex: boolean;
+  svd_dtype: DataType;
+  svd_rank: number;
+  cache_dir: string | null;
+}
+
 export interface TrainModelPartConfig {
   model_name: string;
   include: boolean;
@@ -103,15 +184,6 @@ export interface TrainModelPartConfig {
   guidance_scale: number;
 }
 
-export interface QuantizationConfig {
-  layer_filter: string;
-  layer_filter_preset: string;
-  layer_filter_regex: boolean;
-  svd_dtype: DataType;
-  svd_rank: number;
-  cache_dir: string | null;
-}
-
 export interface TrainEmbeddingConfig {
   uuid: string;
   model_name: string;
@@ -122,37 +194,6 @@ export interface TrainEmbeddingConfig {
   token_count: number | null;
   initial_embedding_text: string;
   is_output_embedding: boolean;
-}
-
-export interface CloudConfig {
-  enabled: boolean;
-  type: CloudType;
-  file_sync: CloudFileSync;
-  create: boolean;
-  name: string;
-  tensorboard_tunnel: boolean;
-  sub_type: string;
-  gpu_type: string;
-  volume_size: number;
-  min_download: number;
-  remote_dir: string;
-  huggingface_cache_dir: string;
-  onetrainer_dir: string;
-  install_cmd: string;
-  install_onetrainer: boolean;
-  update_onetrainer: boolean;
-  detach_trainer: boolean;
-  run_id: string;
-  download_samples: boolean;
-  download_output_model: boolean;
-  download_saves: boolean;
-  download_backups: boolean;
-  download_tensorboard: boolean;
-  delete_workspace: boolean;
-  on_finish: CloudAction;
-  on_error: CloudAction;
-  on_detached_finish: CloudAction;
-  on_detached_error: CloudAction;
 }
 
 export interface TrainOptimizerConfig {
@@ -267,47 +308,6 @@ export interface TrainOptimizerConfig {
   compile: boolean;
 }
 
-export interface SampleConfig {
-  enabled: boolean;
-  prompt: string;
-  negative_prompt: string;
-  height: number;
-  width: number;
-  frames: number;
-  length: number;
-  seed: number;
-  random_seed: boolean;
-  diffusion_steps: number;
-  cfg_scale: number;
-  noise_scheduler: NoiseScheduler;
-  text_encoder_1_layer_skip: number;
-  text_encoder_1_sequence_length: number | null;
-  text_encoder_2_layer_skip: number;
-  text_encoder_2_sequence_length: number | null;
-  text_encoder_3_layer_skip: number;
-  text_encoder_4_layer_skip: number;
-  transformer_attention_mask: boolean;
-  force_last_timestep: boolean;
-  sample_inpainting: boolean;
-  base_image_path: string;
-  mask_image_path: string;
-}
-
-export interface CloudSecretsConfig {
-  api_key: string;
-  id: string;
-  host: string;
-  port: string;
-  user: string;
-  key_file: string;
-  password: string;
-}
-
-export interface SecretsConfig {
-  huggingface_token: string;
-  cloud: CloudSecretsConfig;
-}
-
 export interface TrainConfig {
   training_method: TrainingMethod;
   model_type: ModelType;
@@ -323,6 +323,7 @@ export interface TrainConfig {
   validate_after: number;
   validate_after_unit: TimeUnit;
   continue_last_backup: boolean;
+  prevent_overwrites: boolean;
   include_train_config: ConfigPart;
   multi_gpu: boolean;
   device_indexes: string;

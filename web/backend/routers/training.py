@@ -1,21 +1,9 @@
-"""
-REST endpoints for training lifecycle control.
-
-All heavy lifting is delegated to ``TrainerService``; these endpoints
-are thin wrappers that translate HTTP requests into service method calls.
-"""
-
 from web.backend.services.trainer_service import TrainerService
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(tags=["training"])
-
-
-# ---------------------------------------------------------------------------
-# Response / request models
-# ---------------------------------------------------------------------------
 
 
 class TrainingActionResponse(BaseModel):
@@ -30,14 +18,10 @@ class TrainingStatusResponse(BaseModel):
 
 
 class StartTrainingRequest(BaseModel):
-    """Body for the ``POST /training/start`` endpoint."""
-
     reattach: bool = False
 
 
 class CustomSampleRequest(BaseModel):
-    """Subset of SampleConfig fields for on-demand custom sampling."""
-
     prompt: str = ""
     negative_prompt: str = ""
     height: int = 512
@@ -48,14 +32,8 @@ class CustomSampleRequest(BaseModel):
     cfg_scale: float = 7.0
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.post("/training/start", response_model=TrainingActionResponse)
 def start_training(req: StartTrainingRequest | None = None):
-    """Start a training run using the current in-memory config."""
     reattach = req.reattach if req is not None else False
     service = TrainerService.get_instance()
     result = service.start_training(reattach=reattach)
@@ -64,7 +42,6 @@ def start_training(req: StartTrainingRequest | None = None):
 
 @router.post("/training/stop", response_model=TrainingActionResponse)
 def stop_training():
-    """Request a graceful training stop."""
     service = TrainerService.get_instance()
     result = service.stop_training()
     return TrainingActionResponse(**result)
@@ -72,7 +49,6 @@ def stop_training():
 
 @router.post("/training/sample", response_model=TrainingActionResponse)
 def sample_now():
-    """Request a default sample during training."""
     service = TrainerService.get_instance()
     result = service.sample_now()
     return TrainingActionResponse(**result)
@@ -80,7 +56,6 @@ def sample_now():
 
 @router.post("/training/sample/custom", response_model=TrainingActionResponse)
 def sample_custom(req: CustomSampleRequest):
-    """Request a custom sample with specified parameters."""
     from modules.util.config.SampleConfig import SampleConfig
 
     sample_config = SampleConfig.default_values()
@@ -93,7 +68,6 @@ def sample_custom(req: CustomSampleRequest):
 
 @router.post("/training/backup", response_model=TrainingActionResponse)
 def backup_now():
-    """Request an immediate backup during training."""
     service = TrainerService.get_instance()
     result = service.backup_now()
     return TrainingActionResponse(**result)
@@ -101,7 +75,6 @@ def backup_now():
 
 @router.post("/training/save", response_model=TrainingActionResponse)
 def save_now():
-    """Request an immediate save during training."""
     service = TrainerService.get_instance()
     result = service.save_now()
     return TrainingActionResponse(**result)
@@ -109,7 +82,6 @@ def save_now():
 
 @router.get("/training/status", response_model=TrainingStatusResponse)
 def get_status():
-    """Return the current training status."""
     service = TrainerService.get_instance()
     status = service.get_status()
     return TrainingStatusResponse(**status)

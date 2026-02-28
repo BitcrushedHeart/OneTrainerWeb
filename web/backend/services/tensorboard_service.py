@@ -1,20 +1,13 @@
-"""
-Singleton service that reads TensorBoard event files and exposes scalar data.
-
-Uses tensorboard's EventAccumulator when available, with a graceful fallback
-that returns an empty result set if the tensorboard package is not installed.
-"""
-
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 from web.backend.services._singleton import SingletonMixin
 
 logger = logging.getLogger(__name__)
 
-# Graceful import — tensorboard may not be installed in every environment.
 try:
     from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
@@ -27,97 +20,79 @@ except ImportError:
     )
 
 
-class TensorboardService(SingletonMixin):
-    """
-    Thread-safe singleton that reads TensorBoard event files from a
-    configurable log directory.
+MAX_CACHED_ACCUMULATORS = 10
 
-    Supports listing runs (subdirectories), listing scalar tags per run,
-    and returning scalar data with optional incremental reads.
-    """
+
+class TensorboardService(SingletonMixin):
 
     def __init__(self) -> None:
-        self._accumulators: dict[str, "EventAccumulator"] = {}
+        self._accumulators: dict[str, EventAccumulator] = {}
+        self._access_times: dict[str, float] = {}
         self._accumulator_lock = threading.Lock()
-
-    # ------------------------------------------------------------------
-    # Log directory resolution
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _resolve_log_dir(log_dir: str | None = None) -> str:
-        """
-        Resolve the TensorBoard log directory.
-
-        If *log_dir* is given explicitly, use it.  Otherwise, read the
-        workspace_dir from the current config and append the standard
-        ``run/tensorboard`` suffix.
-        """
         if log_dir:
             return log_dir
 
         from web.backend.services.config_service import ConfigService
 
         config_service = ConfigService.get_instance()
-        workspace_dir = config_service.config.workspace_dir or "workspace"
-        return os.path.join(workspace_dir, "run", "tensorboard")
+        return config_service.config.workspace_dir or "workspace"
 
-    # ------------------------------------------------------------------
-    # Run enumeration
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _is_tfevents_dir(directory: str) -> bool:
+        try:
+            for entry in os.scandir(directory):
+                if entry.is_file() and entry.name.startswith("events.out.tfevents"):
+                    return True
+        except OSError:
+            pass
+        return False
 
     def list_runs(self, log_dir: str | None = None) -> list[str]:
-        """
-        Return sorted list of training run names (subdirectory names)
-        under the tensorboard log directory.
-        """
         resolved = self._resolve_log_dir(log_dir)
         if not os.path.isdir(resolved):
             return []
 
+        base = Path(resolved)
         runs: list[str] = []
-        for entry in os.scandir(resolved):
-            if entry.is_dir():
-                runs.append(entry.name)
+        for dirpath, _dirnames, filenames in os.walk(resolved):
+            if any(f.startswith("events.out.tfevents") for f in filenames):
+                rel = Path(dirpath).relative_to(base).as_posix()
+                runs.append(rel)
 
-        runs.sort(reverse=True)  # Most recent first (timestamps sort naturally)
+        runs.sort(reverse=True)
         return runs
 
-    # ------------------------------------------------------------------
-    # EventAccumulator management
-    # ------------------------------------------------------------------
+    def _maybe_evict(self) -> None:
+        while len(self._accumulators) > MAX_CACHED_ACCUMULATORS:
+            oldest_key = min(self._access_times, key=self._access_times.get)  # type: ignore[arg-type]
+            del self._accumulators[oldest_key]
+            del self._access_times[oldest_key]
+            logger.debug("Evicted accumulator cache for: %s", oldest_key)
 
     def _get_accumulator(self, run_dir: str) -> "EventAccumulator | None":
-        """
-        Return (and cache) an EventAccumulator for the given run directory.
-
-        The accumulator is reloaded each time to pick up new events.
-        """
         if not _HAS_TENSORBOARD:
             return None
 
         with self._accumulator_lock:
             if run_dir not in self._accumulators:
+                self._maybe_evict()
                 acc = EventAccumulator(run_dir)
                 acc.Reload()
                 self._accumulators[run_dir] = acc
             else:
-                # Reload to pick up new events since last call
                 self._accumulators[run_dir].Reload()
 
+            self._access_times[run_dir] = time.time()
             return self._accumulators[run_dir]
 
     def _run_path(self, run_name: str, log_dir: str | None = None) -> str:
-        """Build the full path to a specific run directory."""
         resolved = self._resolve_log_dir(log_dir)
         return os.path.join(resolved, run_name)
 
-    # ------------------------------------------------------------------
-    # Scalar data access
-    # ------------------------------------------------------------------
-
     def list_tags(self, run_name: str, log_dir: str | None = None) -> list[str]:
-        """Return all scalar tag names for a given run."""
         run_path = self._run_path(run_name, log_dir)
         if not os.path.isdir(run_path):
             return []
@@ -136,14 +111,6 @@ class TensorboardService(SingletonMixin):
         after_step: int = 0,
         log_dir: str | None = None,
     ) -> list[dict]:
-        """
-        Return scalar data points for a given run and tag.
-
-        Each data point is ``{"wall_time": float, "step": int, "value": float}``.
-
-        If *after_step* > 0, only data points with step > after_step are
-        returned (for incremental polling).
-        """
         run_path = self._run_path(run_name, log_dir)
         if not os.path.isdir(run_path):
             return []
@@ -157,33 +124,22 @@ class TensorboardService(SingletonMixin):
         except KeyError:
             return []
 
-        result: list[dict] = []
-        for event in events:
-            if event.step > after_step:
-                result.append(
-                    {
-                        "wall_time": event.wall_time,
-                        "step": event.step,
-                        "value": event.value,
-                    }
-                )
-
-        return result
-
-    # ------------------------------------------------------------------
-    # Cache invalidation
-    # ------------------------------------------------------------------
+        return [
+            {
+                "wall_time": event.wall_time,
+                "step": event.step,
+                "value": event.value,
+            }
+            for event in events
+            if event.step > after_step
+        ]
 
     def clear_cache(self, run_name: str | None = None, log_dir: str | None = None) -> None:
-        """
-        Clear cached EventAccumulator(s).
-
-        If *run_name* is given, only that run's cache is cleared.
-        Otherwise all cached accumulators are dropped.
-        """
         with self._accumulator_lock:
             if run_name:
                 run_path = self._run_path(run_name, log_dir)
                 self._accumulators.pop(run_path, None)
+                self._access_times.pop(run_path, None)
             else:
                 self._accumulators.clear()
+                self._access_times.clear()

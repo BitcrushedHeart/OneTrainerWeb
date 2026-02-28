@@ -18,7 +18,7 @@ export interface SelectProps {
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   ({ label, options, configPath, value: controlledValue, onChange, tooltip, disabled, formatLabel = enumLabel }, ref) => {
-    const [configValue, setConfigValue] = useConfigField<string>(configPath ?? "__unused__");
+    const [configValue, setConfigValue] = useConfigField<string>(configPath);
 
     const currentValue = configPath ? (configValue ?? "") : (controlledValue ?? "");
 

@@ -1,22 +1,9 @@
-"""
-REST endpoints for system metrics and information.
-
-Provides one-shot snapshots of current system metrics (CPU, RAM, GPU)
-and static system information.  For real-time streaming, use the
-``/ws/system`` WebSocket endpoint in ``ws/system_ws.py``.
-"""
-
 from web.backend.services.monitor_service import MonitorService
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/system", tags=["system"])
-
-
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
 
 
 class GpuMetrics(BaseModel):
@@ -50,20 +37,13 @@ class SystemInfoResponse(BaseModel):
     gpus: list[GpuInfo]
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-
 @router.get("/metrics", response_model=SystemMetricsResponse)
 def get_metrics():
-    """Return a one-shot snapshot of current system metrics."""
     monitor = MonitorService.get_instance()
     return SystemMetricsResponse(**monitor.get_metrics())
 
 
 @router.get("/info", response_model=SystemInfoResponse)
 def get_info():
-    """Return static system information (GPU names, total RAM, CPU count)."""
     monitor = MonitorService.get_instance()
     return SystemInfoResponse(**monitor.get_system_info())

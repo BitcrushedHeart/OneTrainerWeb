@@ -68,9 +68,7 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
     setSample((prev) => ({ ...prev, [field]: value }));
   };
 
-  // ------------------------------------------------------------------
   // Status polling
-  // ------------------------------------------------------------------
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -126,9 +124,7 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
     };
   }, [open, status, fetchStatus]);
 
-  // ------------------------------------------------------------------
   // Actions
-  // ------------------------------------------------------------------
 
   const handleLoadModel = async () => {
     setErrorMessage(null);
@@ -183,9 +179,7 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
     fetchStatus();
   };
 
-  // ------------------------------------------------------------------
   // Derived state
-  // ------------------------------------------------------------------
 
   const isLoading = status === "loading";
   const isSampling = status === "sampling";
@@ -199,7 +193,6 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
 
   return (
     <ModalBase open={open} onClose={onClose} title="Standalone Sampling" size="xl" closeOnBackdrop={false}>
-      {/* Status card */}
       <Card hoverable={false} padding="sm" className="mb-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -240,9 +233,7 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
         </div>
       </Card>
 
-      {/* Main content: parameters + preview */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left column: parameters */}
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <span className="text-sm font-medium text-[var(--color-on-surface)]">Prompt</span>
@@ -279,7 +270,6 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
           </div>
         </div>
 
-        {/* Right column: preview */}
         <div className="flex flex-col gap-4">
           <div className="aspect-square bg-[var(--color-surface-raised)] border border-[var(--color-border-subtle)] rounded-[var(--radius-sm)] flex items-center justify-center overflow-hidden">
             {sampleImage ? (
@@ -297,7 +287,6 @@ export function StandaloneSamplingModal({ open, onClose }: StandaloneSamplingMod
         </div>
       </div>
 
-      {/* Footer: progress bar + action buttons */}
       <div className="flex flex-col gap-3 mt-6 pt-4 border-t border-[var(--color-border-subtle)]">
         {isSampling && (
           <ProgressBar

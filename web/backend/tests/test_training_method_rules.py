@@ -1,14 +1,6 @@
-"""
-Training method compatibility tests.
-
-Verifies that the training method constraints understood by the web UI
-match what the existing Python backend supports.
-
-Rules derived from modules/ui/TopBar.py __create_training_method().
-"""
-
 import os
 import sys
+
 import pytest
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -34,13 +26,11 @@ TWO = ["FINE_TUNE", "LORA"]
 @pytest.mark.skipif(not HAS_ENUMS, reason="Enum modules not importable")
 class TestTrainingMethodRules:
     def test_all_training_methods_are_valid(self):
-        """Verify the TrainingMethod enum contains expected values."""
         expected = {"FINE_TUNE", "LORA", "EMBEDDING", "FINE_TUNE_VAE"}
         actual = {tm.name for tm in TrainingMethod}
         assert expected.issubset(actual), f"Missing methods: {expected - actual}"
 
     def test_model_types_exist(self):
-        """Verify ModelType enum has entries."""
         assert len(list(ModelType)) > 15, "Expected at least 15 model types"
 
     @pytest.mark.parametrize("model_type_name,expected_methods", [
@@ -74,7 +64,6 @@ class TestTrainingMethodRules:
         ("QWEN", TWO),
     ])
     def test_training_methods_per_model(self, model_type_name, expected_methods):
-        """Verify each model type has the correct set of allowed training methods."""
         # Just verify the model type exists in the enum
         try:
             ModelType[model_type_name]
@@ -85,7 +74,6 @@ class TestTrainingMethodRules:
         assert len(expected_methods) in (2, 3, 4), f"Unexpected method count for {model_type_name}"
 
     def test_fine_tune_vae_not_for_transformer_models(self):
-        """FINE_TUNE_VAE should not be available for transformer-based architectures."""
         transformer_models = {
             "FLUX_DEV_1", "FLUX_FILL_DEV_1", "FLUX_2",
             "STABLE_DIFFUSION_3", "STABLE_DIFFUSION_35",

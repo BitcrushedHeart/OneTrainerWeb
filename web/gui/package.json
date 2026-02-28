@@ -6,10 +6,12 @@
   "main": "dist/main/main/index.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "tsc -p tsconfig.main.json && concurrently -k --names \"vite,electron\" -c \"cyan,green\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "generate-types": "node ../scripts/run_generate_types.js",
+    "copy:splash": "node -e \"require('fs').cpSync('src/main/splash.html','dist/main/main/splash.html')\"",
+    "dev:electron": "tsc -p tsconfig.main.json && npm run copy:splash && concurrently -k --names \"vite,electron\" -c \"cyan,green\" \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
-    "build:main": "tsc -p tsconfig.main.json",
-    "build:electron": "tsc -p tsconfig.main.json && vite build",
+    "build:main": "tsc -p tsconfig.main.json && npm run copy:splash",
+    "build:electron": "npm run generate-types && tsc -p tsconfig.main.json && npm run copy:splash && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest run",
@@ -23,9 +25,13 @@
     "dist:linux": "electron-builder --linux"
   },
   "build": {
-    "extends": null
+    "extends": "electron-builder.yml"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "immer": "^10.1.1",
     "lucide-react": "^0.511.0",
     "react": "^19.1.0",

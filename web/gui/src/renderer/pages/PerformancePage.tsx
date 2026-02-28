@@ -1,17 +1,7 @@
-/**
- * Performance monitoring tab that displays real-time system metrics
- * (CPU, RAM, GPU VRAM, temperature, utilization) via WebSocket.
- *
- * Uses SVG charts following the same pattern as TensorboardPage.tsx
- * and a custom hook for WebSocket connectivity with reconnection.
- */
-
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { generateTicks, formatValue } from "@/utils/chartUtils";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { useReconnectingWebSocket } from "@/hooks/useReconnectingWebSocket";
+import { useUiStore } from "@/store/uiStore";
 
 interface GpuMetrics {
   index: number;
@@ -35,30 +25,17 @@ interface TimestampedMetrics extends MetricsSnapshot {
   timestamp: number;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Maximum number of data points in the rolling window (~5 minutes at 1s). */
 const MAX_POINTS = 300;
 
-/** WebSocket reconnection parameters. */
-const INITIAL_RETRY_MS = 1000;
-const MAX_RETRY_MS = 30000;
-const BACKOFF_FACTOR = 2;
-
-/** Chart dimensions (match TensorboardPage). */
 const CHART_WIDTH = 520;
 const CHART_HEIGHT = 260;
 const CHART_PADDING = { top: 24, right: 16, bottom: 36, left: 64 };
 
-/** Chart colors (brand palette). */
 const LINE_COLOR = "var(--color-orchid-600)";
 const GRID_COLOR = "var(--color-border-subtle)";
 const TEXT_COLOR = "var(--color-on-surface-secondary)";
 const AXIS_COLOR = "var(--color-on-surface-secondary)";
 
-/** Per-GPU line colors that cycle. */
 const GPU_COLORS = [
   "var(--color-orchid-600)",
   "var(--color-violet-500)",
@@ -68,22 +45,10 @@ const GPU_COLORS = [
   "var(--color-error-500)",
 ];
 
-// Protocol-aware WebSocket URL (same pattern as useTrainingWebSocket)
-const isFileProtocol =
-  typeof window !== "undefined" && window.location.protocol === "file:";
-const WS_BASE = isFileProtocol
-  ? "ws://localhost:8000"
-  : `ws://${window.location.host}`;
-const WS_URL = `${WS_BASE}/ws/system`;
-
 function formatTime(secondsAgo: number): string {
   if (secondsAgo < 60) return `${Math.round(secondsAgo)}s`;
   return `${Math.floor(secondsAgo / 60)}m${Math.round(secondsAgo % 60)}s`;
 }
-
-// ---------------------------------------------------------------------------
-// useSystemWebSocket hook
-// ---------------------------------------------------------------------------
 
 interface UseSystemWebSocketResult {
   connected: boolean;
@@ -92,14 +57,10 @@ interface UseSystemWebSocketResult {
 }
 
 function useSystemWebSocket(): UseSystemWebSocketResult {
+  const backendConnected = useUiStore((s) => s.backendConnected);
   const [connected, setConnected] = useState(false);
   const [latest, setLatest] = useState<MetricsSnapshot | null>(null);
   const [history, setHistory] = useState<TimestampedMetrics[]>([]);
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const retryRef = useRef(INITIAL_RETRY_MS);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef = useRef(true);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
@@ -125,65 +86,16 @@ function useSystemWebSocket(): UseSystemWebSocketResult {
     }
   }, []);
 
-  useEffect(() => {
-    mountedRef.current = true;
-
-    function connect() {
-      if (!mountedRef.current) return;
-
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setConnected(true);
-        retryRef.current = INITIAL_RETRY_MS;
-      };
-
-      ws.onmessage = handleMessage;
-
-      ws.onclose = () => {
-        wsRef.current = null;
-        setConnected(false);
-        scheduleReconnect();
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    function scheduleReconnect() {
-      if (!mountedRef.current) return;
-
-      retryTimerRef.current = setTimeout(() => {
-        retryRef.current = Math.min(
-          retryRef.current * BACKOFF_FACTOR,
-          MAX_RETRY_MS,
-        );
-        connect();
-      }, retryRef.current);
-    }
-
-    connect();
-
-    return () => {
-      mountedRef.current = false;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
-    };
-  }, [handleMessage]);
+  useReconnectingWebSocket({
+    path: "/ws/system",
+    onMessage: handleMessage,
+    onOpen: () => setConnected(true),
+    onClose: () => setConnected(false),
+    enabled: backendConnected,
+  });
 
   return { connected, latest, history };
 }
-
-// ---------------------------------------------------------------------------
-// MetricChart (SVG area/line chart — follows TensorboardPage ScalarChart)
-// ---------------------------------------------------------------------------
 
 interface ChartPoint {
   time: number;
@@ -195,11 +107,8 @@ interface MetricChartProps {
   points: ChartPoint[];
   unit: string;
   color?: string;
-  /** If true, render as area chart with gradient fill. */
   area?: boolean;
-  /** Fixed Y-axis max (e.g. 100 for percentages). */
   yMax?: number;
-  /** Fixed Y-axis min (default 0). */
   yMin?: number;
 }
 
@@ -214,26 +123,13 @@ function MetricChart({
 }: MetricChartProps) {
   if (points.length === 0) {
     return (
-      <div className="card card-static" style={{ padding: "16px" }}>
-        <h4
-          style={{
-            margin: "0 0 8px 0",
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            color: "var(--color-on-surface)",
-          }}
-        >
+      <div className="card card-static p-4">
+        <h4 className="m-0 mb-2 text-caption font-semibold text-[var(--color-on-surface)]">
           {title}
         </h4>
         <div
-          style={{
-            height: CHART_HEIGHT,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--color-on-surface-secondary)",
-            fontSize: "0.8125rem",
-          }}
+          className="flex items-center justify-center text-[var(--color-on-surface-secondary)] text-caption"
+          style={{ height: CHART_HEIGHT }}
         >
           Waiting for data...
         </div>
@@ -289,32 +185,14 @@ function MetricChart({
   const gradId = `perf-area-${title.replace(/[^a-zA-Z0-9]/g, "-")}`;
 
   return (
-    <div className="card card-static" style={{ padding: "16px" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: "8px",
-        }}
-      >
-        <h4
-          style={{
-            margin: 0,
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            color: "var(--color-on-surface)",
-          }}
-        >
+    <div className="card card-static p-4">
+      <div className="flex justify-between items-baseline mb-2">
+        <h4 className="m-0 text-caption font-semibold text-[var(--color-on-surface)]">
           {title}
         </h4>
         <span
-          className="mono tabular-nums"
-          style={{
-            fontSize: "0.75rem",
-            color: color,
-            fontWeight: 600,
-          }}
+          className="mono tabular-nums text-micro font-semibold"
+          style={{ color: color }}
         >
           {formatValue(latestValue)} {unit}
         </span>
@@ -322,9 +200,11 @@ function MetricChart({
       <svg
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
         width="100%"
-        style={{ display: "block" }}
+        className="block"
+        role="img"
+        aria-label={`${title} chart`}
       >
-        {/* Grid lines */}
+        <title>{title}</title>
         {yTicks.map((tick) => {
           const y = yScale(tick);
           return (
@@ -341,7 +221,6 @@ function MetricChart({
           );
         })}
 
-        {/* Area fill with gradient */}
         {area && (
           <>
             <defs>
@@ -354,7 +233,6 @@ function MetricChart({
           </>
         )}
 
-        {/* Data line */}
         <path
           d={linePath}
           fill="none"
@@ -364,7 +242,6 @@ function MetricChart({
           strokeLinecap="round"
         />
 
-        {/* X-axis labels (time ago) */}
         {xTicks.map((tick) => {
           const x = xScale(minTime + tick);
           if (x < CHART_PADDING.left || x > CHART_WIDTH - CHART_PADDING.right) return null;
@@ -383,7 +260,6 @@ function MetricChart({
           );
         })}
 
-        {/* Y-axis labels */}
         {yTicks.map((tick) => {
           const y = yScale(tick);
           if (y < CHART_PADDING.top || y > CHART_PADDING.top + plotH) return null;
@@ -402,7 +278,6 @@ function MetricChart({
           );
         })}
 
-        {/* X-axis label */}
         <text
           x={CHART_PADDING.left + plotW / 2}
           y={CHART_HEIGHT - 0}
@@ -414,7 +289,6 @@ function MetricChart({
           time
         </text>
 
-        {/* Axes */}
         <line
           x1={CHART_PADDING.left}
           y1={CHART_PADDING.top}
@@ -434,7 +308,6 @@ function MetricChart({
           opacity="0.5"
         />
 
-        {/* Data point count */}
         <text
           x={CHART_WIDTH - CHART_PADDING.right}
           y={CHART_PADDING.top - 8}
@@ -451,10 +324,6 @@ function MetricChart({
   );
 }
 
-// ---------------------------------------------------------------------------
-// StatCard (summary metric display)
-// ---------------------------------------------------------------------------
-
 interface StatCardProps {
   label: string;
   value: string;
@@ -464,57 +333,24 @@ interface StatCardProps {
 
 function StatCard({ label, value, subtext, color }: StatCardProps) {
   return (
-    <div
-      style={{
-        background: "var(--color-surface-raised)",
-        border: "1px solid var(--color-border-subtle)",
-        borderRadius: "var(--radius-sm)",
-        padding: "16px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "4px",
-      }}
-    >
-      <span
-        style={{
-          fontSize: "0.6875rem",
-          fontWeight: 500,
-          color: "var(--color-on-surface-secondary)",
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-        }}
-      >
+    <div className="bg-[var(--color-surface-raised)] border border-[var(--color-border-subtle)] rounded-[var(--radius-sm)] p-4 flex flex-col gap-1">
+      <span className="text-label font-medium text-[var(--color-on-surface-secondary)] uppercase tracking-wider">
         {label}
       </span>
       <span
-        className="mono tabular-nums"
-        style={{
-          fontSize: "1.5rem",
-          fontWeight: 700,
-          color: color ?? "var(--color-on-surface)",
-          lineHeight: 1.2,
-        }}
+        className="mono tabular-nums text-2xl font-bold leading-tight"
+        style={{ color: color ?? "var(--color-on-surface)" }}
       >
         {value}
       </span>
       {subtext && (
-        <span
-          className="mono tabular-nums"
-          style={{
-            fontSize: "0.6875rem",
-            color: "var(--color-on-surface-secondary)",
-          }}
-        >
+        <span className="mono tabular-nums text-label text-[var(--color-on-surface-secondary)]">
           {subtext}
         </span>
       )}
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Helper: extract chart data from history
-// ---------------------------------------------------------------------------
 
 function extractTimeSeries(
   history: TimestampedMetrics[],
@@ -535,10 +371,6 @@ function extractTimeSeries(
   return points;
 }
 
-// ---------------------------------------------------------------------------
-// PerformancePage
-// ---------------------------------------------------------------------------
-
 export default function PerformancePage() {
   const { connected, latest, history } = useSystemWebSocket();
 
@@ -551,76 +383,42 @@ export default function PerformancePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Connection status */}
-      <div className="card card-static" style={{ padding: "16px" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "16px",
-            flexWrap: "wrap",
-          }}
-        >
-          <span
-            style={{
-              fontSize: "0.8125rem",
-              fontWeight: 600,
-              color: "var(--color-on-surface)",
-            }}
-          >
+      <div className="card card-static p-4">
+        <div className="flex items-center gap-4 flex-wrap">
+          <span className="text-caption font-semibold text-[var(--color-on-surface)]">
             System Monitor
           </span>
 
           <span
-            style={{
-              fontSize: "0.6875rem",
-              color: connected
-                ? "var(--color-success-500)"
-                : "var(--color-on-surface-secondary)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "4px",
-            }}
+            className={`text-label inline-flex items-center gap-1 ${
+              connected
+                ? "text-[var(--color-success-500)]"
+                : "text-[var(--color-on-surface-secondary)]"
+            }`}
           >
             <span
+              className={`w-1.5 h-1.5 rounded-full inline-block ${
+                connected
+                  ? "bg-[var(--color-success-500)]"
+                  : "bg-[var(--color-on-surface-secondary)]"
+              }`}
               style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: connected
-                  ? "var(--color-success-500)"
-                  : "var(--color-on-surface-secondary)",
-                display: "inline-block",
-                animation: connected ? "pulseError 2s infinite" : "none",
+                animation: connected ? "pulseAlive 2s infinite" : "none",
               }}
             />
             {connected ? "Live (1s interval)" : "Connecting..."}
           </span>
 
           {history.length > 0 && (
-            <span
-              className="mono tabular-nums"
-              style={{
-                fontSize: "0.6875rem",
-                color: "var(--color-on-surface-secondary)",
-                marginLeft: "auto",
-              }}
-            >
+            <span className="mono tabular-nums text-label text-[var(--color-on-surface-secondary)] ml-auto">
               {history.length}/{MAX_POINTS} samples
             </span>
           )}
         </div>
       </div>
 
-      {/* Current stats cards */}
       {latest && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-            gap: "12px",
-          }}
-        >
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
           <StatCard
             label="CPU"
             value={`${latest.cpu_percent.toFixed(1)}%`}
@@ -694,30 +492,13 @@ export default function PerformancePage() {
         </div>
       )}
 
-      {/* No GPU message */}
       {latest && gpuCount === 0 && (
-        <div
-          className="card card-static"
-          style={{
-            padding: "16px",
-            textAlign: "center",
-            color: "var(--color-on-surface-secondary)",
-            fontSize: "0.875rem",
-          }}
-        >
+        <div className="card card-static p-4 text-center text-[var(--color-on-surface-secondary)] text-small">
           No GPU detected. GPU metrics are unavailable. CPU and RAM monitoring remain active.
         </div>
       )}
 
-      {/* Charts grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 480px), 1fr))",
-          gap: "16px",
-        }}
-      >
-        {/* CPU chart */}
+      <div className="grid grid-cols-2 gap-4">
         <MetricChart
           title="CPU Usage"
           points={cpuPoints}
@@ -727,7 +508,6 @@ export default function PerformancePage() {
           yMin={0}
         />
 
-        {/* RAM chart */}
         <MetricChart
           title="RAM Usage"
           points={ramPoints}
@@ -738,7 +518,6 @@ export default function PerformancePage() {
           yMax={latest?.ram_total_gb}
         />
 
-        {/* Per-GPU VRAM charts */}
         {Array.from({ length: gpuCount }).map((_, gpuIdx) => {
           const vramPoints = extractTimeSeries(
             history,
@@ -760,7 +539,6 @@ export default function PerformancePage() {
           );
         })}
 
-        {/* Per-GPU utilization charts */}
         {Array.from({ length: gpuCount }).map((_, gpuIdx) => {
           const hasUtil = latest?.gpus[gpuIdx]?.utilization !== null;
           if (!hasUtil) return null;
@@ -782,7 +560,6 @@ export default function PerformancePage() {
           );
         })}
 
-        {/* Per-GPU temperature charts */}
         {Array.from({ length: gpuCount }).map((_, gpuIdx) => {
           const hasTemp = latest?.gpus[gpuIdx]?.temperature !== null;
           if (!hasTemp) return null;
@@ -805,32 +582,12 @@ export default function PerformancePage() {
         })}
       </div>
 
-      {/* Waiting state before any data arrives */}
       {!latest && (
-        <div
-          className="card card-static"
-          style={{
-            padding: "32px",
-            textAlign: "center",
-          }}
-        >
-          <h3
-            style={{
-              margin: "0 0 8px 0",
-              color: "var(--color-on-surface)",
-              fontSize: "1rem",
-              fontWeight: 600,
-            }}
-          >
+        <div className="card card-static p-8 text-center">
+          <h3 className="m-0 mb-2 text-[var(--color-on-surface)] text-body font-semibold">
             Waiting for Metrics
           </h3>
-          <p
-            style={{
-              margin: 0,
-              color: "var(--color-on-surface-secondary)",
-              fontSize: "0.875rem",
-            }}
-          >
+          <p className="m-0 text-[var(--color-on-surface-secondary)] text-small">
             System metrics will appear here once the backend connection is established.
             The monitor streams CPU, RAM, and GPU data in real time.
           </p>

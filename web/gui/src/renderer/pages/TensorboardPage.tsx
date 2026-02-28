@@ -2,10 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { configApi } from "@/api/configApi";
 import { ScalarChart } from "@/components/shared/ScalarChart";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface ScalarPoint {
   wall_time: number;
   step: number;
@@ -18,15 +14,7 @@ interface TagData {
   lastStep: number;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const POLL_INTERVAL_MS = 5000;
-
-// ---------------------------------------------------------------------------
-// TensorboardPage
-// ---------------------------------------------------------------------------
 
 export default function TensorboardPage() {
   const [runs, setRuns] = useState<string[]>([]);
@@ -44,7 +32,6 @@ export default function TensorboardPage() {
   const selectedRunRef = useRef<string>("");
   selectedRunRef.current = selectedRun;
 
-  // ── Fetch runs on mount ────────────────────────────────────────────────
   useEffect(() => {
     configApi
       .tensorboardRuns()
@@ -58,7 +45,6 @@ export default function TensorboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Full load when run changes ─────────────────────────────────────────
   const loadRunData = useCallback(
     async (runName: string) => {
       if (!runName) return;
@@ -90,7 +76,6 @@ export default function TensorboardPage() {
     }
   }, [selectedRun, loadRunData]);
 
-  // ── Incremental polling ────────────────────────────────────────────────
   const fetchIncremental = useCallback(async () => {
     const runName = selectedRunRef.current;
     if (!runName) return;
@@ -127,10 +112,8 @@ export default function TensorboardPage() {
     return () => clearInterval(interval);
   }, [autoRefresh, selectedRun, fetchIncremental]);
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-6">
-      {/* Controls */}
       <div className="card card-static" style={{ padding: "16px" }}>
         <div
           style={{
@@ -140,12 +123,11 @@ export default function TensorboardPage() {
             flexWrap: "wrap",
           }}
         >
-          {/* Run selector */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <label
               htmlFor="tb-run-select"
               style={{
-                fontSize: "0.8125rem",
+                fontSize: "var(--text-caption)",
                 fontWeight: 600,
                 color: "var(--color-on-surface)",
                 whiteSpace: "nowrap",
@@ -171,7 +153,6 @@ export default function TensorboardPage() {
             </select>
           </div>
 
-          {/* Auto-refresh toggle */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <button
               className="theme-toggle"
@@ -208,7 +189,6 @@ export default function TensorboardPage() {
               {autoRefresh ? "Live" : "Paused"}
             </button>
 
-            {/* Refresh button */}
             <button
               className="theme-toggle"
               onClick={() => loadRunData(selectedRun)}
@@ -235,11 +215,10 @@ export default function TensorboardPage() {
             </button>
           </div>
 
-          {/* Status indicator */}
           {autoRefresh && selectedRun && (
             <span
               style={{
-                fontSize: "0.6875rem",
+                fontSize: "var(--text-label)",
                 color: "var(--color-success-500)",
                 display: "inline-flex",
                 alignItems: "center",
@@ -262,7 +241,6 @@ export default function TensorboardPage() {
         </div>
       </div>
 
-      {/* Error display */}
       {error && (
         <div
           className="card card-static"
@@ -270,14 +248,13 @@ export default function TensorboardPage() {
             padding: "12px 16px",
             borderColor: "var(--color-error-500)",
             color: "var(--color-error-500)",
-            fontSize: "0.8125rem",
+            fontSize: "var(--text-caption)",
           }}
         >
           {error}
         </div>
       )}
 
-      {/* Loading state */}
       {loading && (
         <div
           className="card card-static"
@@ -294,7 +271,6 @@ export default function TensorboardPage() {
         </div>
       )}
 
-      {/* No data state */}
       {!loading && selectedRun && tagData.length === 0 && !error && (
         <div
           className="card card-static"
@@ -309,7 +285,6 @@ export default function TensorboardPage() {
         </div>
       )}
 
-      {/* No runs state */}
       {!loading && runs.length === 0 && !error && (
         <div
           className="card card-static"
@@ -341,7 +316,6 @@ export default function TensorboardPage() {
         </div>
       )}
 
-      {/* Chart grid */}
       {!loading && tagData.length > 0 && (
         <div
           style={{

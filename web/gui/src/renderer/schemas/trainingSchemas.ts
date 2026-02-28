@@ -1,4 +1,6 @@
 import type { ModelType } from "@/types/generated/enums";
+import { DTYPE_SUBSETS } from "@/types/generated/dataTypeSubsets";
+import { MODEL_TYPE_GROUPS } from "@/types/generated/modelTypeInfo";
 import type { FieldDef, SectionDef } from "./fieldTypes";
 
 export interface TrainingColumnDef {
@@ -79,13 +81,8 @@ function base2Frame(videoEnabled: boolean = false): SectionDef {
     { key: "ema_update_step_interval", label: "EMA Update Interval", type: "entry", inputType: "number" },
     { key: "gradient_checkpointing", label: "Gradient Checkpointing", type: "select-adv", stringOptions: [] },
     { key: "layer_offload_fraction", label: "Layer Offload Fraction", type: "entry", inputType: "number" },
-    { key: "train_dtype", label: "Train Data Type", type: "select-kv", options: [
-      { label: "float32", value: "FLOAT_32" }, { label: "float16", value: "FLOAT_16" },
-      { label: "bfloat16", value: "BFLOAT_16" }, { label: "tfloat32", value: "TFLOAT_32" },
-    ] },
-    { key: "fallback_train_dtype", label: "Fallback Train Dtype", type: "select-kv", options: [
-      { label: "float32", value: "FLOAT_32" }, { label: "bfloat16", value: "BFLOAT_16" },
-    ] },
+    { key: "train_dtype", label: "Train Data Type", type: "select-kv", options: DTYPE_SUBSETS.train },
+    { key: "fallback_train_dtype", label: "Fallback Train Dtype", type: "select-kv", options: DTYPE_SUBSETS.fallback_train },
     { key: "enable_autocast_cache", label: "Autocast Cache", type: "toggle" },
     { key: "resolution", label: "Resolution", type: "entry" },
   ];
@@ -303,19 +300,23 @@ const QWEN_TRAINING: TrainingSchema = {
   ],
 };
 
+function inGroup(mt: ModelType, group: string): boolean {
+  return (MODEL_TYPE_GROUPS[group] as string[] | undefined)?.includes(mt) ?? false;
+}
+
 export function getTrainingSchema(modelType: ModelType): TrainingSchema {
-  if (modelType.startsWith("STABLE_DIFFUSION_15") || modelType.startsWith("STABLE_DIFFUSION_20") || modelType.startsWith("STABLE_DIFFUSION_21")) return SD_TRAINING;
-  if (modelType.startsWith("STABLE_DIFFUSION_XL")) return SDXL_TRAINING;
-  if (modelType === "STABLE_DIFFUSION_3" || modelType === "STABLE_DIFFUSION_35") return SD3_TRAINING;
-  if (modelType === "FLUX_DEV_1" || modelType === "FLUX_FILL_DEV_1") return FLUX_TRAINING;
-  if (modelType === "FLUX_2") return FLUX2_TRAINING;
-  if (modelType === "WUERSTCHEN_2" || modelType === "STABLE_CASCADE_1") return WUERSTCHEN_TRAINING;
-  if (modelType === "PIXART_ALPHA" || modelType === "PIXART_SIGMA") return PIXART_TRAINING;
-  if (modelType === "SANA") return SANA_TRAINING;
-  if (modelType === "HUNYUAN_VIDEO") return HUNYUAN_TRAINING;
-  if (modelType === "HI_DREAM_FULL") return HI_DREAM_TRAINING;
-  if (modelType === "CHROMA_1") return CHROMA_TRAINING;
-  if (modelType === "Z_IMAGE") return ZIMAGE_TRAINING;
-  if (modelType === "QWEN") return QWEN_TRAINING;
+  if (inGroup(modelType, "is_stable_diffusion")) return SD_TRAINING;
+  if (inGroup(modelType, "is_stable_diffusion_xl")) return SDXL_TRAINING;
+  if (inGroup(modelType, "is_stable_diffusion_3")) return SD3_TRAINING;
+  if (inGroup(modelType, "is_flux_1")) return FLUX_TRAINING;
+  if (inGroup(modelType, "is_flux_2")) return FLUX2_TRAINING;
+  if (inGroup(modelType, "is_wuerstchen")) return WUERSTCHEN_TRAINING;
+  if (inGroup(modelType, "is_pixart")) return PIXART_TRAINING;
+  if (inGroup(modelType, "is_sana")) return SANA_TRAINING;
+  if (inGroup(modelType, "is_hunyuan_video")) return HUNYUAN_TRAINING;
+  if (inGroup(modelType, "is_hi_dream")) return HI_DREAM_TRAINING;
+  if (inGroup(modelType, "is_chroma")) return CHROMA_TRAINING;
+  if (inGroup(modelType, "is_z_image")) return ZIMAGE_TRAINING;
+  if (inGroup(modelType, "is_qwen")) return QWEN_TRAINING;
   return SD_TRAINING;
 }
